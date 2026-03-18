@@ -1,4 +1,4 @@
-// SafeLink Color Palette
+// VisionAlly Color Palette
 export const COLORS = {
   // Primary Purple
   primary: '#8B5CF6',

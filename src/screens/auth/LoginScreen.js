@@ -21,7 +21,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { StorageService } from '../../utils/storage';
-import { COLORS } from '../../constants/colors.js';
+import { COLORS } from '../../constants/colors';
 
 export default function LoginScreen({ navigation }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -162,10 +162,10 @@ export default function LoginScreen({ navigation }) {
           {/* Logo/Header */}
           <View style={styles.header}>
             <View style={styles.logoContainer}>
-              <Ionicons name="shield-checkmark" size={60} color={COLORS.primary} />
+              <Ionicons name="eye" size={60} color={COLORS.primary} />
             </View>
-            <Text style={styles.title}>SafeLink</Text>
-            <Text style={styles.subtitle}>Your safety companion</Text>
+            <Text style={styles.title}>VisionAlly</Text>
+            <Text style={styles.subtitle}>Your employment companion</Text>
           </View>
 
           {/* Form Container */}

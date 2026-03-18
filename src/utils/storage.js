@@ -1,11 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEYS = {
-  USER_SESSION: '@safelink_user_session',
-  USER_ID: '@safelink_user_id',
-  PROFILE_PICTURE: '@safelink_profile_picture',
-  APP_SETTINGS: '@safelink_app_settings',
-  TRUSTED_CONTACTS: '@safelink_trusted_contacts',
+  USER_SESSION: '@visionally_user_session',
+  USER_ID: '@visionally_user_id',
+  PROFILE_PICTURE: '@visionally_profile_picture',
+  APP_SETTINGS: '@visionally_app_settings',
+  TRUSTED_CONTACTS: '@visionally_trusted_contacts',
 };
 
 export const StorageService = {

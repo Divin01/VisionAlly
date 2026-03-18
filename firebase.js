@@ -4,12 +4,12 @@ import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB-tR5SmMPC_d2dfADcTe4KtOSHbAw9kgE",
-  authDomain: "visionally-caa02.firebaseapp.com",
-  projectId: "visionally-caa02",
-  storageBucket: "visionally-caa02.firebasestorage.app",
-  messagingSenderId: "430951115006",
-  appId: "1:430951115006:web:4fa3c9d76c94d3d5bd5daf"
+  apiKey: "AIzaSyCT7fK5OgnivENrc8vSrzE-hKW6u1CpFZk",
+  authDomain: "safelink-47b5b.firebaseapp.com",
+  projectId: "safelink-47b5b",
+  storageBucket: "safelink-47b5b.firebasestorage.app",
+  messagingSenderId: "338925339129",
+  appId: "1:338925339129:web:717eaf9915a97a8ed1bd28"
 };
 
 // Initialize Firebase

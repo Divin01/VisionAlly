@@ -3,13 +3,13 @@ import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../../firebase.js';
-import { StorageService } from '../utils/storage.js';
+import { auth } from '../../firebase';
+import { StorageService } from '../utils/storage';
 
-import LoginScreen from '../screens/auth/LoginScreen.js';
-import MainScreen from '../screens/main/MainScreen.js';
-import ChatConversationScreen from '../screens/main/ChatConversationScreen.js';
-import EmergencyAlertSetupScreen from '../screens/main/EmergencyAlertSetupScreen.js';
+import LoginScreen from '../screens/auth/LoginScreen';
+import MainScreen from '../screens/main/MainScreen';
+import ChatConversationScreen from '../screens/main/ChatConversationScreen';
+import EmergencyAlertSetupScreen from '../screens/main/EmergencyAlertSetupScreen';
 
 const Stack = createNativeStackNavigator();
 

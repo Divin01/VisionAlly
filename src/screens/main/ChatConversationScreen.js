@@ -299,17 +299,17 @@ export default function ChatConversationScreen({ route, navigation }) {
       </Text>
       <Text style={styles.emptySubtitle}>
         {conversationId 
-          ? 'Send a message to start chatting with SafeLink AI'
-          : 'Ask me anything about safety, report incidents, or get support'
+          ? 'Send a message to start chatting with VisionAlly AI'
+          : 'Ask me anything about careers, job interviews, or professional development'
         }
       </Text>
       
       <View style={styles.suggestionContainer}>
         <Text style={styles.suggestionTitle}>Try asking:</Text>
         {[
-          "What should I do in an emergency?",
-          "How can I stay safe when walking alone?",
-          "What are important safety contacts?"
+          "How should I prepare for this job interview?",
+          "Can you help me improve my CV?",
+          "What workplace accommodations should I request?"
         ].map((suggestion, index) => (
           <TouchableOpacity
             key={index}
@@ -380,7 +380,7 @@ export default function ChatConversationScreen({ route, navigation }) {
 
               <View style={styles.brandTextContainer}>
                 <View style={styles.brandNameRow}>
-                  <Text style={styles.safeLinkText}>SafeLink</Text>
+                  <Text style={styles.visionAllyText}>VisionAlly</Text>
                   <View style={styles.aiChip}>
                     <Text style={styles.aiChipText}>AI</Text>
                   </View>
@@ -541,7 +541,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 2,
   },
-  safeLinkText: {
+  visionAllyText: {
     fontSize: 20,
     fontWeight: '800',
     color: COLORS.textPrimary,

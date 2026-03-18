@@ -15,63 +15,37 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { COLORS } from '../../constants/colors';
-import { EmailService } from '../../services/emailService';
-import { SmsService } from '../../services/smsService';
 import { auth, firestore } from '../../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import HomeScreen from './HomeScreen';
-import ReportsScreen from './ReportsScreen';
 import SmartChatScreen from './SmartChatScreen';
-import TrustedContactsScreen from './TrustedContactsScreen';
-import SettingsScreen from './SettingsScreen'; // Import the new screen
+import SettingsScreen from './SettingsScreen';
 
 const { width: screenWidth } = Dimensions.get('window');
-
-const TABS = [
-  { id: 'home', name: 'Home', icon: 'home', component: (props) => <HomeScreen {...props} onNavigateToReports={handleNavigateToReports} /> },
-  { id: 'reports', name: 'Reports', icon: 'map', component: (props) => <ReportsScreen {...props} /> },
-  { id: 'chat', name: 'Smart Chat', icon: 'chatbubbles', component: SmartChatScreen },
-  { id: 'contacts', name: 'Contacts', icon: 'people', component: TrustedContactsScreen },
-  { id: 'settings', name: 'Settings', icon: 'settings', component: SettingsScreen },
-];
 
 const ComingSoonScreen = ({ title }) => (
   <View style={styles.comingSoonContainer}>
     <Ionicons name="construct-outline" size={64} color={COLORS.primary} />
-    <Text style={styles.comingSoonTitle}>{title}</Text>
-    <Text style={styles.comingSoonText}>Coming Soon</Text>
+    <Text style={styles.comingSoonTitle}>Coming Soon</Text>
+    <Text style={styles.comingSoonText}>This feature is under development</Text>
   </View>
 );
 
+const TABS = [
+  { id: 'home', name: 'Home', icon: 'home', component: HomeScreen },
+  { id: 'interviewer', name: 'Interviewer', icon: 'mic', component: ComingSoonScreen },
+  { id: 'chat', name: 'Smart Chat', icon: 'chatbubbles', component: SmartChatScreen },
+  { id: 'jobtrends', name: 'Job Trends', icon: 'trending-up', component: ComingSoonScreen },
+  { id: 'profile', name: 'Profile', icon: 'person', component: SettingsScreen },
+];
 
 export default function MainScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('home');
-  const [panicPressed, setPanicPressed] = useState(false);
-  const panicAnim = useRef(new Animated.Value(0)).current;
-  const [reportsRoute, setReportsRoute] = useState(null);
-
-  const handleNavigateToReports = (focusLocation) => {
-    setActiveTab('reports');
-    setReportsRoute({ focusLocation });
-    
-    // Clear the route after a short delay to allow the screen to process it
-    setTimeout(() => {
-      setReportsRoute(null);
-    }, 1000);
-  };
-
-  const TABS = [
-    { id: 'home', name: 'Home', icon: 'home', component: (props) => <HomeScreen {...props} onNavigateToReports={handleNavigateToReports} /> },
-    { id: 'reports', name: 'HeatMap', icon: 'map', component: (props) => <ReportsScreen {...props} /> },
-    { id: 'chat', name: 'Smart Chat', icon: 'chatbubbles', component: SmartChatScreen },
-    { id: 'contacts', name: 'Contacts', icon: 'people', component: TrustedContactsScreen },
-    { id: 'settings', name: 'Settings', icon: 'settings', component: SettingsScreen },
-  ];
 
   const getUserName = async () => {
     try {
       const currentUser = auth.currentUser;
-      if (!currentUser) return 'SafeLink User';
+      if (!currentUser) return 'VisionAlly User';
 
       // Try to get display name from Firebase Auth
       if (currentUser.displayName) {
@@ -89,10 +63,10 @@ export default function MainScreen({ navigation }) {
         return currentUser.email.split('@')[0];
       }
 
-      return 'SafeLink User';
+      return 'VisionAlly User';
     } catch (error) {
       console.error('Error getting user name:', error);
-      return 'SafeLink User';
+      return 'VisionAlly User';
     }
   };
 
@@ -140,158 +114,16 @@ export default function MainScreen({ navigation }) {
     }
   };
 
-  const handlePanicButton = () => {
-    Animated.sequence([
-      Animated.timing(panicAnim, {
-        toValue: 1,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-      Animated.timing(panicAnim, {
-        toValue: 0,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    setPanicPressed(true);
-    Alert.alert(
-      'Emergency Alert',
-      'Are you in danger? This will immediately alert all your trusted contacts via SMS and Email with your location.',
-      [
-        {
-          text: 'Cancel',
-          onPress: () => setPanicPressed(false),
-          style: 'cancel',
-        },
-        {
-          text: 'Send Alert',
-          onPress: handleSendEmergencyAlert,
-          style: 'destructive',
-        },
-      ]
-    );
-  };
-
-  const handleSendEmergencyAlert = async () => {
-    try {
-      // Get user information
-      const currentUser = auth.currentUser;
-      const userName = await getUserName();
-      const userPhone = currentUser?.phoneNumber || 'Not provided';
-      
-      // Get actual GPS location
-      const locationString = await getLocationString();
-      
-      // Prepare alert data
-      const alertData = {
-        userName,
-        userPhone,
-        location: locationString,
-        timestamp: new Date().toLocaleString('en-ZA', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          timeZoneName: 'short'
-        }),
-      };
-
-      // Send both Email and SMS alerts in background
-      const [emailResult, smsResult] = await Promise.all([
-        EmailService.sendEmergencyAlertToContacts(alertData),
-        SmsService.sendEmergencySMSToContacts(alertData)
-      ]);
-      
-      // Combine results
-      const result = {
-        success: emailResult.success || smsResult.success,
-        message: emailResult.message || smsResult.message,
-        details: {
-          email: emailResult,
-          sms: smsResult
-        }
-      };
-      
-      setPanicPressed(false);
-
-      if (result.success) {
-        // Show detailed success message
-        let detailMessage = '';
-        if (result.details) {
-          if (result.details.email.success) {
-            detailMessage += `Email: ${result.details.email.message}\n`;
-          }
-          if (result.details.sms.success) {
-            detailMessage += `SMS: ${result.details.sms.message}`;
-          }
-        }
-
-        Alert.alert(
-          'Alert Sent Successfully',
-          detailMessage || result.message,
-          [{ text: 'OK', style: 'default' }]
-        );
-      } else {
-        // Show which alerts failed
-        let errorMessage = result.message;
-        if (result.details) {
-          errorMessage += '\n\n';
-          if (!result.details.email.success) {
-            errorMessage += `Email: ${result.details.email.message}\n`;
-          }
-          if (!result.details.sms.success) {
-            errorMessage += `SMS: ${result.details.sms.message}`;
-          }
-        }
-
-        Alert.alert(
-          'Alert Failed',
-          errorMessage,
-          [
-            { 
-              text: 'Retry', 
-              onPress: handleSendEmergencyAlert,
-              style: 'default'
-            },
-            { 
-              text: 'Call 10111', 
-              onPress: () => {},
-              style: 'cancel'
-            }
-          ]
-        );
-      }
-    } catch (error) {
-      console.error('Error sending emergency alert:', error);
-      setPanicPressed(false);
-      
-      Alert.alert(
-        'Error',
-        'An error occurred while sending the alert. Please call emergency services at 10111.',
-        [{ text: 'OK', style: 'default' }]
-      );
-    }
-  };
-
-  const panicScale = panicAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0.9],
-  });
-
-  const panicOpacity = panicAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0.8],
-  });
-
   const ActiveComponent = TABS.find(tab => tab.id === activeTab)?.component;
   
-  // Always pass route object to prevent undefined errors
-  const activeProps = activeTab === 'reports' 
-    ? { navigation, route: { params: reportsRoute || {} } }
-    : { navigation };
+  // Pass navigation props to components that need it
+  const activeProps = activeTab === 'home' 
+    ? { navigation }
+    : activeTab === 'chat' 
+    ? { navigation }
+    : activeTab === 'profile'
+    ? { navigation }
+    : {};
 
   return (
     <View style={styles.container}>
@@ -303,43 +135,10 @@ export default function MainScreen({ navigation }) {
       
       {/* Main Content Area */}
       <View style={styles.contentContainer}>
-        {React.isValidElement(ActiveComponent) 
-          ? ActiveComponent 
-          : <ActiveComponent {...activeProps} />
-        }
+        {ActiveComponent && <ActiveComponent {...activeProps} />}
       </View>
 
-      {/* Floating Panic Button */}
-      <View style={styles.panicButtonContainer}>
-        <Animated.View
-          style={[
-            styles.panicButtonWrapper,
-            {
-              transform: [{ scale: panicScale }],
-              opacity: panicOpacity,
-            },
-          ]}
-        >
-          <TouchableOpacity
-            style={[styles.panicButton, panicPressed && styles.panicButtonPressed]}
-            onPress={handlePanicButton}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={panicPressed ? ['#DC2626', '#B91C1C'] : ['#EF4444', '#DC2626']}
-              style={styles.panicGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
-              <Ionicons 
-                name="warning" 
-                size={28} 
-                color={COLORS.white} 
-              />
-            </LinearGradient>
-          </TouchableOpacity>
-        </Animated.View>
-      </View>
+      {/* Panic Button Removed - Feature not applicable to VisionAlly */}
 
       {/* Liquid Glass Bottom Tab Navigation */}
       <View style={styles.tabBarContainer}>
