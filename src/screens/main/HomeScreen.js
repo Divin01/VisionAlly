@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import {logo} from './../../../assets/logo.png'
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const COLORS = {
@@ -97,31 +98,6 @@ export default function HomeScreen({ navigation, onNavigateToReports }) {
           />
         }
       >
-        {/* Featured Banner */}
-        {/* <View style={styles.bannerSection}>
-          <LinearGradient
-            colors={['#8B5CF6', '#7C3AED']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.banner}
-          >
-            <View style={styles.bannerContent}>
-              <View>
-                <Text style={styles.bannerSubtitle}>Hot Opportunity</Text>
-                <Text style={styles.bannerTitle}>Remote Senior Developer Needed</Text>
-                <Text style={styles.bannerDescription}>
-                  TechCorp Solutions is hiring experienced developers with inclusive workplace policies
-                </Text>
-              </View>
-              <View style={styles.bannerIconContainer}>
-                <Ionicons name="rocket" size={48} color={COLORS.white} />
-              </View>
-            </View>
-            <TouchableOpacity style={styles.bannerButton}>
-              <Text style={styles.bannerButtonText}>View Details →</Text>
-            </TouchableOpacity>
-          </LinearGradient>
-        </View> */}
 
         {/* Quick Actions */}
         <View style={styles.section}>
