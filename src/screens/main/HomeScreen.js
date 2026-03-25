@@ -34,7 +34,6 @@ const COLORS = {
   black: '#000000',
   transparent: 'transparent',
 };
-const API_BASE_URL = 'https://eventregistry.org/api/v1';
 
 export default function HomeScreen({ navigation, onNavigateToReports }) {
   const [refreshing, setRefreshing] = useState(false);
@@ -70,7 +69,7 @@ export default function HomeScreen({ navigation, onNavigateToReports }) {
                 <Text style={styles.allyText}>Ally</Text>
               </Text>
               <View style={styles.tagline}>
-                <Text style={styles.taglineText}>Your Employment Companion</Text>
+                <Text style={styles.taglineText}>Your career coach Companion</Text>
               </View>
             </View>
           </View>
