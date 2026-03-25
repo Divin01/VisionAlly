@@ -9,7 +9,6 @@ import { StorageService } from '../utils/storage';
 import LoginScreen from '../screens/auth/LoginScreen';
 import MainScreen from '../screens/main/MainScreen';
 import ChatConversationScreen from '../screens/main/ChatConversationScreen';
-import EmergencyAlertSetupScreen from '../screens/main/EmergencyAlertSetupScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -72,13 +71,7 @@ export default function AppNavigator() {
                 headerBackTitleVisible: false,
               }}
             />
-            <Stack.Screen 
-              name="EmergencyAlertSetup" 
-              component={EmergencyAlertSetupScreen}
-              options={{
-                headerShown: false,
-              }}
-            />
+
           </>
         ) : (
           <Stack.Screen name="Login" component={LoginScreen} />
