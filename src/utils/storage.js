@@ -111,27 +111,6 @@ export const StorageService = {
     }
   },
 
-  // Trusted Contacts Management
-  saveTrustedContacts: async (contacts) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.TRUSTED_CONTACTS, JSON.stringify(contacts));
-      return true;
-    } catch (error) {
-      console.error('Error saving trusted contacts:', error);
-      return false;
-    }
-  },
-
-  getTrustedContacts: async () => {
-    try {
-      const contacts = await AsyncStorage.getItem(STORAGE_KEYS.TRUSTED_CONTACTS);
-      return contacts ? JSON.parse(contacts) : [];
-    } catch (error) {
-      console.error('Error getting trusted contacts:', error);
-      return [];
-    }
-  },
-
   // Get all storage keys (for debugging)
   getAllKeys: async () => {
     try {
