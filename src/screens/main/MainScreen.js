@@ -20,6 +20,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import HomeScreen from './HomeScreen';
 import SmartChatScreen from './SmartChatScreen';
 import SettingsScreen from './SettingsScreen';
+import InterviewerScreen from './InterviewerScreen';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -32,11 +33,11 @@ const ComingSoonScreen = ({ title }) => (
 );
 
 const TABS = [
-  { id: 'home', name: 'Home', icon: 'home', component: HomeScreen },
-  { id: 'interviewer', name: 'Interviewer', icon: 'mic', component: ComingSoonScreen },
-  { id: 'chat', name: 'Smart Chat', icon: 'chatbubbles', component: SmartChatScreen },
-  { id: 'jobtrends', name: 'Job Trends', icon: 'trending-up', component: ComingSoonScreen },
-  { id: 'profile', name: 'Profile', icon: 'person', component: SettingsScreen },
+  { id: 'home',        name: 'Home',       icon: 'home',        component: HomeScreen },
+  { id: 'interviewer', name: 'Interviewer', icon: 'mic',         component: InterviewerScreen },
+  { id: 'chat',        name: 'Smart Chat', icon: 'chatbubbles',  component: SmartChatScreen },
+  { id: 'jobtrends',   name: 'Job Trends', icon: 'trending-up',  component: ComingSoonScreen },
+  { id: 'profile',     name: 'Profile',    icon: 'person',       component: SettingsScreen },
 ];
 
 export default function MainScreen({ navigation }) {
