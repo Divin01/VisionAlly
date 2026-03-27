@@ -83,3 +83,70 @@ Before you begin, ensure you have the following installed:
 - **Git** - [Download](https://git-scm.com/)
 - **Expo CLI** - Install with: `npm install -g expo-cli`
 - **Google Gemini API Key** - [Get from Google Cloud Console](https://console.cloud.google.com/)
+
+## 📁 Project Structure
+
+```
+VisionAlly/
+│
+├── 📄 App.js                          # Main React Native app component
+├── 📄 app.json                        # Expo configuration
+├── 📄 babel.config.js                 # Babel transpiler configuration
+├── 📄 config.js                       # Application configuration
+├── 📄 firebase.js                     # Firebase initialization and configuration
+├── 📄 index.js                        # Entry point
+├── 📄 package.json                    # Node.js dependencies and scripts
+├── 📄 LICENSE                         # Project license
+├── 📄 README.md                       # This file
+│
+├── 📂 ai-models/
+│   └── 📄 main.py                     # AI model training/inference scripts
+│
+├── 📂 assets/
+│   └── 📁 (Images, fonts, and other static assets)
+│
+├── 📂 models/
+│   ├── 📂 ai/
+│   │   └── 📄 chatbot.py              # Chatbot AI model implementation
+│   └── 📂 server/
+│       ├── 📄 app.py                  # Flask backend server application
+│       ├── 📄 requirements.txt        # Python dependencies
+│       └── 📄 system_instructions.txt # System prompts for AI models
+│
+├── 📂 src/
+│   │
+│   ├── 📂 constants/
+│   │   └── 📄 colors.js               # Application color constants (#8B5CF6 purple theme)
+│   │
+│   ├── 📂 contexts/
+│   │   └── 📄 ChatContext.js          # React Context for chat state management
+│   │
+│   ├── 📂 navigation/
+│   │   └── 📄 AppNavigator.js         # React Navigation stack configuration
+│   │
+│   ├── 📂 screens/
+│   │   ├── 📂 auth/
+│   │   │   └── 📄 LoginScreen.js      # User authentication screen
+│   │   │
+│   │   └── 📂 main/
+│   │       ├── 📄 HomeScreen.js       # Main home/dashboard screen
+│   │       ├── 📄 MainScreen.js       # Primary application screen
+│   │       ├── 📄 ChatConversationScreen.js    # Chat conversation interface
+│   │       ├── 📄 SmartChatScreen.js  # AI-powered chat screen
+│   │       ├── 📄 SettingsScreen.js   # User settings and preferences
+│   │       │
+│   │       └── 📂 components/
+│   │           ├── 📄 AudioPlayer.js  # Audio playback component
+│   │           ├── 📄 AudioRecorder.js # Audio recording component
+│   │           ├── 📄 ChatInput.js    # Chat message input component
+│   │           ├── 📄 MessageBubble.js # Chat message bubble component
+│   │           └── 📄 MarkdownText.js # Markdown text rendering component
+│   │
+│   ├── 📂 services/
+│   │   ├── 📄 ApiService.js           # API communication service
+│   │   └── 📄 ChatStorageService.js   # Chat history persistence service
+│   │
+│   └── 📂 utils/
+│       └── 📄 storage.js              # AsyncStorage utilities and helpers
+│
+└── 📂 node_modules/                   # npm dependencies (auto-generated)
