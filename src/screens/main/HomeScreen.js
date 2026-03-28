@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Image, Platform, StatusBar, ActivityIndicator,
+  Platform, StatusBar, ActivityIndicator,
   Linking, Alert, Animated, Dimensions, Modal,
   TextInput, KeyboardAvoidingView,
 } from 'react-native';
@@ -22,7 +22,6 @@ import {
 import { InterviewStorageService } from '../../services/InterviewStorageService';
 
 const { width: W } = Dimensions.get('window');
-const TREND_CARD_W = W * 0.38;
 const JOB_CARD_W   = W - 48; // full-width minus padding
 
 // ─── Interview Tips data ──────────────────────────────────────────────────────
@@ -326,7 +325,7 @@ export default function HomeScreen({ navigation }) {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.inkDark} translucent />
 
       {/* Skills Prompt Modal */}
       <SkillsPromptModal
@@ -335,49 +334,41 @@ export default function HomeScreen({ navigation }) {
         onSkip={() => { setShowSkillsModal(false); loadJobs([]); }}
       />
 
-      {/* ── Hero Header Gradient ─────────────────────────────────────────── */}
+      {/* ── Fixed Hero Header ─────────────────────────────────────────── */}
       <LinearGradient
-        colors={[COLORS.primaryDark, COLORS.primary, '#4F86F7']}
+        colors={[COLORS.inkDark, COLORS.inkSoft]}
         start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.heroGradient}
-      />
+        end={{ x: 1, y: 0 }}
+        style={styles.heroHeader}
+      >
+        <View style={styles.heroContent}>
+          <View style={styles.heroTopRow}>
+            <View>
+              <Text style={styles.heroGreeting}>{greeting},</Text>
+              <Text style={styles.heroName}>{userName} 👋</Text>
+            </View>
+            <TouchableOpacity style={styles.bellBtn} activeOpacity={0.8}>
+              <Ionicons name="notifications-outline" size={22} color={COLORS.white} />
+              <View style={styles.bellDot} />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.heroSub}>
+            {userSkills.length > 0
+              ? `${userSkills.slice(0, 2).join(' · ')} · SA Jobs`
+              : 'Finding opportunities in South Africa'}
+          </Text>
+        </View>
+        {/* Decorative circles */}
+        <View style={styles.heroDeco1} />
+        <View style={styles.heroDeco2} />
+      </LinearGradient>
 
+      <View style={styles.contentSheet}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {/* ── TOP BAR ───────────────────────────────────────────────────── */}
-        <View style={styles.topBar}>
-          {/* Logo */}
-          <View style={styles.logoWrap}>
-            <Image
-              source={require('../../../assets/logo.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-          </View>
-
-          {/* Notification Bell */}
-          <TouchableOpacity style={styles.bellBtn} activeOpacity={0.8}>
-            <Ionicons name="notifications-outline" size={22} color={COLORS.white} />
-            {/* Red dot */}
-            <View style={styles.bellDot} />
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Greeting ─────────────────────────────────────────────────── */}
-        <Animated.View style={[styles.greetingBlock, { opacity: fadeAnim }]}>
-          <Text style={styles.greetingLine}>{greeting},</Text>
-          <Text style={styles.greetingName}>{userName} 👋</Text>
-          <Text style={styles.greetingSub}>
-            {userSkills.length > 0
-              ? `${userSkills.slice(0, 2).join(' · ')} · SA Jobs`
-              : 'Finding opportunities in South Africa'}
-          </Text>
-        </Animated.View>
-
         {/* ── White content area ───────────────────────────────────────── */}
         <View style={styles.contentArea}>
 
@@ -448,24 +439,26 @@ export default function HomeScreen({ navigation }) {
             </View>
           ) : (
             <View style={styles.jobsList}>
-              {jobs.slice(0, 5).map(job => <JobCard key={job.id} job={job} />)}
+              {jobs.slice(0, 3).map(job => <JobCard key={job.id} job={job} />)}
 
-              {/* See More */}
-              <TouchableOpacity
-                style={styles.seeMoreBtn}
-                onPress={() => navigation.getParent()?.jumpTo('jobtrends')}
-                activeOpacity={0.85}
-              >
-                <LinearGradient
-                  colors={[COLORS.ink, COLORS.inkSoft]}
-                  style={styles.seeMoreGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
+              {/* View All */}
+              {jobs.length > 3 && (
+                <TouchableOpacity
+                  style={styles.seeMoreBtn}
+                  onPress={() => navigation.getParent()?.jumpTo('jobtrends')}
+                  activeOpacity={0.85}
                 >
-                  <Text style={styles.seeMoreText}>See All Jobs</Text>
-                  <Ionicons name="arrow-forward" size={16} color={COLORS.white} />
-                </LinearGradient>
-              </TouchableOpacity>
+                  <LinearGradient
+                    colors={[COLORS.ink, COLORS.inkSoft]}
+                    style={styles.seeMoreGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  >
+                    <Text style={styles.seeMoreText}>View All Jobs</Text>
+                    <Ionicons name="arrow-forward" size={16} color={COLORS.white} />
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -485,61 +478,65 @@ export default function HomeScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.tipsScroll}
-          >
+          <View style={styles.tipsGrid}>
             {TIPS.map(tip => (
               <View key={tip.id} style={styles.tipCard}>
                 <View style={[styles.tipIconWrap, { backgroundColor: `${tip.color}15` }]}>
                   <Ionicons name={tip.icon} size={22} color={tip.color} />
                 </View>
-                <Text style={styles.tipTitle}>{tip.title}</Text>
-                <Text style={styles.tipText}>{tip.text}</Text>
+                <View style={styles.tipTextBlock}>
+                  <Text style={styles.tipTitle}>{tip.title}</Text>
+                  <Text style={styles.tipText}>{tip.text}</Text>
+                </View>
               </View>
             ))}
-          </ScrollView>
+          </View>
 
         </View>
 
         <View style={{ height: 110 }} />
       </ScrollView>
+      </View>
     </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const HERO_H = Platform.OS === 'ios' ? 260 : 240;
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.backgroundSecondary },
 
-  heroGradient: {
-    position: 'absolute', top: 0, left: 0, right: 0,
-    height: HERO_H, zIndex: 0,
+  // Fixed Hero Header (matching JobTrends)
+  heroHeader: {
+    paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 20,
+    paddingBottom: 44, paddingHorizontal: 24,
+    position: 'relative', overflow: 'hidden',
   },
-
-  scrollContent: { paddingTop: 0 },
-
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 12,
-    paddingHorizontal: 20,
-    paddingBottom: 8,
-    zIndex: 2,
+  heroContent: { zIndex: 2 },
+  heroTopRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
   },
-  logoWrap: { height: 36, justifyContent: 'center' },
-  logo:     { height: 32, width: 130 },
+  heroGreeting: { fontSize: 14, color: 'rgba(255,255,255,0.70)', fontWeight: '500' },
+  heroName: { fontSize: 30, fontWeight: '900', color: COLORS.white, letterSpacing: -0.5 },
+  heroSub: {
+    fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: '500', marginTop: 6,
+  },
+  heroDeco1: {
+    position: 'absolute', right: -30, top: -30,
+    width: 160, height: 160, borderRadius: 80,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  heroDeco2: {
+    position: 'absolute', right: 50, bottom: -50,
+    width: 120, height: 120, borderRadius: 60,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
 
   bellBtn: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.20)',
+    backgroundColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.30)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
   },
   bellDot: {
     position: 'absolute', top: 9, right: 9,
@@ -547,24 +544,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#EF4444', borderWidth: 1.5, borderColor: COLORS.white,
   },
 
-  // Greeting
-  greetingBlock: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 28, zIndex: 2 },
-  greetingLine:  { fontSize: 14, color: 'rgba(255,255,255,0.80)', fontWeight: '500' },
-  greetingName:  { fontSize: 28, fontWeight: '800', color: COLORS.white, marginTop: 2 },
-  greetingSub:   { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 4, fontWeight: '500' },
+  scrollContent: {
+    paddingTop: 0,
+  },
 
-  // White content area (rounded top)
+  // Content sheet with rounded top corners
+  contentSheet: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundSecondary,
+    borderTopLeftRadius: 28,
+    marginTop: -20,
+    overflow: 'hidden',
+  },
+
+  // White content area
   contentArea: {
     backgroundColor: COLORS.background,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
     paddingTop: 24,
     minHeight: 600,
-    marginTop: -16,
-    ...Platform.select({
-      ios:     { shadowColor: '#000', shadowOffset:{width:0,height:-4}, shadowOpacity:0.06, shadowRadius:16 },
-      android: { elevation: 8 },
-    }),
   },
 
   // Section headers
@@ -588,7 +585,7 @@ const styles = StyleSheet.create({
   // Trend cards
   trendScroll:       { paddingLeft: 20, paddingRight: 8, paddingBottom: 4 },
   trendCard: {
-    width: TREND_CARD_W, backgroundColor: COLORS.white, borderRadius: 16,
+    width: W * 0.38, backgroundColor: COLORS.white, borderRadius: 16,
     padding: 14, marginRight: 10, borderTopWidth: 3,
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.06, shadowRadius:8 },
@@ -672,11 +669,12 @@ const styles = StyleSheet.create({
   },
   seeMoreText: { color: COLORS.white, fontWeight: '700', fontSize: 14 },
 
-  // Tips
-  tipsScroll: { paddingLeft: 20, paddingRight: 8, paddingBottom: 4 },
+  // Tips — vertical stack
+  tipsGrid: { paddingHorizontal: 20, gap: 10, paddingBottom: 4 },
   tipCard: {
-    width: W * 0.62, backgroundColor: COLORS.white, borderRadius: 18,
-    padding: 16, marginRight: 12,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.white, borderRadius: 16,
+    padding: 16, gap: 14,
     borderWidth: 1, borderColor: COLORS.borderLight,
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.06, shadowRadius:8 },
@@ -684,10 +682,11 @@ const styles = StyleSheet.create({
     }),
   },
   tipIconWrap: {
-    width: 40, height: 40, borderRadius: 12,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+    width: 44, height: 44, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
   },
-  tipTitle: { fontSize: 14, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 6 },
+  tipTextBlock: { flex: 1 },
+  tipTitle: { fontSize: 14, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 4 },
   tipText:  { fontSize: 12, color: COLORS.textSecondary, lineHeight: 18, fontWeight: '500' },
 
   // Skills Modal

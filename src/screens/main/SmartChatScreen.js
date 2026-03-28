@@ -12,6 +12,7 @@ import {
   Alert,
   Switch,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS } from '../../constants/colors';
@@ -211,15 +212,27 @@ export default function SmartChatScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.inkDark} />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Smart Chat</Text>
-          <Text style={styles.headerSubtitle}>AI-Powered Career Coach</Text>
+      {/* Fixed Hero Header */}
+      <LinearGradient
+        colors={[COLORS.inkDark, COLORS.inkSoft]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.heroHeader}
+      >
+        <View style={styles.heroContent}>
+          <Text style={styles.heroTitle}>Smart Chat</Text>
+          <Text style={styles.heroTitle2}>AI Career Coach</Text>
+          <Text style={styles.heroSub}>
+            Career guidance · Interview prep
+          </Text>
         </View>
-      </View>
+        <View style={styles.heroDeco1} />
+        <View style={styles.heroDeco2} />
+      </LinearGradient>
+
+      <View style={styles.contentSheet}>
 
       {/* New Conversation Button */}
       <View style={styles.newConversationContainer}>
@@ -308,6 +321,7 @@ export default function SmartChatScreen({ navigation }) {
           />
         }
       />
+      </View>
     </View>
   );
 }
@@ -317,25 +331,38 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.backgroundSecondary,
   },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 60 : (StatusBar.currentHeight || 0) + 16,
-    paddingBottom: 16,
-    backgroundColor: COLORS.background,
+  // Fixed Hero Header (matching JobTrends)
+  heroHeader: {
+    paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 20,
+    paddingBottom: 44, paddingHorizontal: 24,
+    position: 'relative', overflow: 'hidden',
   },
-  headerContent: {
-    flexDirection: 'column',
+  heroContent: { zIndex: 2 },
+  heroTitle: { fontSize: 30, fontWeight: '900', color: COLORS.white, letterSpacing: -0.5 },
+  heroTitle2: { fontSize: 30, fontWeight: '900', color: COLORS.primaryLight, letterSpacing: -0.5 },
+  heroSub: {
+    fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: '500', marginTop: 6,
   },
-  headerTitle: {
-    fontSize: 30,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 8,
+  heroDeco1: {
+    position: 'absolute', right: -30, top: -30,
+    width: 160, height: 160, borderRadius: 80,
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
-  headerSubtitle: {
-    fontSize: 16,
-    color: COLORS.textSecondary,
+  heroDeco2: {
+    position: 'absolute', right: 50, bottom: -50,
+    width: 120, height: 120, borderRadius: 60,
+    backgroundColor: 'rgba(255,255,255,0.03)',
   },
+
+  // Content sheet with rounded top corners
+  contentSheet: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundSecondary,
+    borderTopLeftRadius: 28,
+    marginTop: -20,
+    overflow: 'hidden',
+  },
+
   newConversationContainer: {
     paddingHorizontal: 20,
     paddingVertical: 16,

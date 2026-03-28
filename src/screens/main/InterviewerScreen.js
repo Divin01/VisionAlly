@@ -31,6 +31,8 @@ const COLORS = {
   primaryDark: '#7C3AED',
   primaryLight: '#A78BFA',
   primaryVeryLight: '#EDE9FE',
+  inkDark: '#0F172A',
+  inkSoft: '#1E293B',
   background: '#FFFFFF',
   backgroundSecondary: '#F9FAFB',
   textPrimary: '#111827',
@@ -428,37 +430,32 @@ export default function InterviewerScreen({ navigation, route }) {
   // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.inkDark} translucent />
 
-      {/* ── Gradient Overlay ─────────────────────────────────── */}
+      {/* ── Fixed Hero Header ─────────────────────────────────── */}
       <LinearGradient
-        colors={['rgba(139,92,246,0.10)', 'rgba(139,92,246,0.02)', 'transparent']}
-        style={styles.gradientOverlay}
+        colors={[COLORS.inkDark, COLORS.inkSoft]}
         start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      />
-
-      {/* ── Header ───────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <View style={styles.headerTextBlock}>
-          <Text style={styles.headerTitle}>
-            <Text style={styles.headerTitleBold}>AI </Text>
-            <Text style={styles.headerTitleAccent}>Interviewer</Text>
-          </Text>
-          <Text style={styles.headerSubtitle}>
-            Practice smarter. Interview with confidence.
-          </Text>
+        end={{ x: 1, y: 0 }}
+        style={styles.heroHeader}
+      >
+        <View style={styles.heroHeaderContent}>
+          <View style={styles.heroHeaderTextBlock}>
+            <Text style={styles.heroTitle}>AI Interviewer</Text>
+            <Text style={styles.heroTitle2}>Mock Practice</Text>
+            <Text style={styles.heroSub}>
+              Practice smarter · Interview with confidence
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.heroInfoBtn} onPress={showAboutInfo}>
+            <Text style={styles.heroInfoBtnIcon}>i</Text>
+          </TouchableOpacity>
         </View>
+        <View style={styles.heroDeco1} />
+        <View style={styles.heroDeco2} />
+      </LinearGradient>
 
-        <TouchableOpacity style={styles.infoBtn} onPress={showAboutInfo}>
-          <LinearGradient
-            colors={[`${COLORS.primary}22`, `${COLORS.primaryLight}33`]}
-            style={styles.infoBtnGradient}
-          >
-            <Text style={styles.infoBtnIcon}>i</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
+      <View style={styles.contentSheet}>
 
       {/* ── Tips Banner ─────────────────────────────────────── */}
       <LinearGradient
@@ -628,6 +625,7 @@ export default function InterviewerScreen({ navigation, route }) {
         {/* Bottom spacing for tab bar */}
         <View style={{ height: 110 }} />
       </ScrollView>
+      </View>
     </View>
   );
 }
@@ -638,66 +636,51 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAFAFA',
   },
-  gradientOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: Platform.OS === 'ios' ? 260 : 240,
-    zIndex: 0,
+
+  // ── Fixed Hero Header (matching JobTrends) ──────────────
+  heroHeader: {
+    paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 20,
+    paddingBottom: 44, paddingHorizontal: 24,
+    position: 'relative', overflow: 'hidden',
+  },
+  heroHeaderContent: {
+    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
+    zIndex: 2,
+  },
+  heroHeaderTextBlock: { flex: 1, marginRight: 12 },
+  heroTitle: { fontSize: 30, fontWeight: '900', color: COLORS.white, letterSpacing: -0.5 },
+  heroTitle2: { fontSize: 30, fontWeight: '900', color: COLORS.primaryLight, letterSpacing: -0.5 },
+  heroSub: {
+    fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: '500', marginTop: 6,
+  },
+  heroInfoBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)',
+    marginTop: 4,
+  },
+  heroInfoBtnIcon: {
+    fontSize: 16, fontWeight: '800', color: COLORS.white, fontStyle: 'italic',
+  },
+  heroDeco1: {
+    position: 'absolute', right: -30, top: -30,
+    width: 160, height: 160, borderRadius: 80,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  heroDeco2: {
+    position: 'absolute', right: 50, bottom: -50,
+    width: 120, height: 120, borderRadius: 60,
+    backgroundColor: 'rgba(255,255,255,0.03)',
   },
 
-  // ── Header ──────────────────────────────────────────────
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'ios' ? 58 : (StatusBar.currentHeight || 0) + 18,
-    paddingHorizontal: 20,
-    paddingBottom: 6,
-    zIndex: 1,
-  },
-  headerTextBlock: {
+  // Content sheet with rounded top corners
+  contentSheet: {
     flex: 1,
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 30,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 8,
-  },
-  headerTitleBold: {
-    fontWeight: '700',
-  },
-  headerTitleAccent: {
-    color: COLORS.primary,
-    fontWeight: '800',
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-    fontWeight: '500',
-    letterSpacing: 0.1,
-  },
-  infoBtn: {
-    marginTop: 4,
-  },
-  infoBtnGradient: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: `${COLORS.primary}25`,
-  },
-  infoBtnIcon: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: COLORS.primary,
-    fontStyle: 'italic',
+    backgroundColor: '#FAFAFA',
+    borderTopLeftRadius: 28,
+    marginTop: -20,
+    overflow: 'hidden',
   },
 
   // ── Tip Banner ───────────────────────────────────────────

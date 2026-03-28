@@ -21,11 +21,11 @@ const { width: screenWidth } = Dimensions.get('window');
 
 // ─── Tabs config ──────────────────────────────────────────────────────────────
 const TABS = [
-  { id: 'home',        name: 'Home',       icon: 'home',        component: HomeScreen },
+  { id: 'home',        name: 'Home',        icon: 'home',        component: HomeScreen },
+  { id: 'jobtrends',   name: 'Job Trends',  icon: 'trending-up', component: JobTrendsScreen },
+  { id: 'chat',        name: 'Smart Chat',  icon: 'chatbubbles', component: SmartChatScreen },
   { id: 'interviewer', name: 'Interviewer', icon: 'mic',         component: InterviewerScreen },
-  { id: 'chat',        name: 'Smart Chat', icon: 'chatbubbles',  component: SmartChatScreen },
-  { id: 'jobtrends',   name: 'Job Trends', icon: 'trending-up',  component: JobTrendsScreen },
-  { id: 'profile',     name: 'Profile',    icon: 'person',       component: SettingsScreen },
+  { id: 'profile',     name: 'Profile',     icon: 'person',      component: SettingsScreen },
 ];
 
 export default function MainScreen({ navigation, route }) {

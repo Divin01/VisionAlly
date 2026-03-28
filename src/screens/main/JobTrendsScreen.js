@@ -192,25 +192,6 @@ export default function JobTrendsScreen({ navigation }) {
 
   const ListHeader = () => (
     <View>
-      {/* ── Hero header ──────────────────────────────────────────────────── */}
-      <LinearGradient
-        colors={[COLORS.inkDark, COLORS.inkSoft]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.heroHeader}
-      >
-        <View style={styles.heroContent}>
-          <Text style={styles.heroTitle}>Job Market</Text>
-          <Text style={styles.heroTitle2}>South Africa</Text>
-          <Text style={styles.heroSub}>
-            Live data · Powered by Adzuna
-          </Text>
-        </View>
-        {/* Decorative circles */}
-        <View style={styles.heroDeco1} />
-        <View style={styles.heroDeco2} />
-      </LinearGradient>
-
       {/* ── Summary stats ────────────────────────────────────────────────── */}
       <View style={styles.statsRow}>
         <StatCard
@@ -357,22 +338,43 @@ export default function JobTrendsScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.inkDark} />
 
-      <FlatList
-        ref={flatListRef}
-        data={loading ? [] : jobs}
-        renderItem={renderJob}
-        keyExtractor={keyExtractor}
-        ListHeaderComponent={ListHeader}
-        ListFooterComponent={ListFooter}
-        ListEmptyComponent={ListEmpty}
-        onEndReached={handleLoadMore}
-        onEndReachedThreshold={0.4}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.flatContent}
-        removeClippedSubviews
-        maxToRenderPerBatch={8}
-        windowSize={10}
-      />
+      {/* ── Fixed Hero Header ──────────────────────────────────────────── */}
+      <LinearGradient
+        colors={[COLORS.inkDark, COLORS.inkSoft]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.heroHeader}
+      >
+        <View style={styles.heroContent}>
+          <Text style={styles.heroTitle}>Job Market</Text>
+          <Text style={styles.heroTitle2}>South Africa</Text>
+          <Text style={styles.heroSub}>
+            Live data · Powered by Adzuna
+          </Text>
+        </View>
+        {/* Decorative circles */}
+        <View style={styles.heroDeco1} />
+        <View style={styles.heroDeco2} />
+      </LinearGradient>
+
+      <View style={styles.contentSheet}>
+        <FlatList
+          ref={flatListRef}
+          data={loading ? [] : jobs}
+          renderItem={renderJob}
+          keyExtractor={keyExtractor}
+          ListHeaderComponent={ListHeader}
+          ListFooterComponent={ListFooter}
+          ListEmptyComponent={ListEmpty}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.4}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.flatContent}
+          removeClippedSubviews
+          maxToRenderPerBatch={8}
+          windowSize={10}
+        />
+      </View>
     </View>
   );
 }
@@ -385,7 +387,7 @@ const styles = StyleSheet.create({
   // Hero
   heroHeader: {
     paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 20,
-    paddingBottom: 28, paddingHorizontal: 24,
+    paddingBottom: 44, paddingHorizontal: 24,
     position: 'relative', overflow: 'hidden',
   },
   heroContent: { zIndex: 2 },
@@ -403,6 +405,15 @@ const styles = StyleSheet.create({
     position: 'absolute', right: 50, bottom: -50,
     width: 120, height: 120, borderRadius: 60,
     backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+
+  // Content sheet with rounded top corners
+  contentSheet: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundSecondary,
+    borderTopLeftRadius: 28,
+    marginTop: -20,
+    overflow: 'hidden',
   },
 
   // Stats

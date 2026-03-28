@@ -11,6 +11,7 @@ import {
   Platform,
   Image,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -259,22 +260,22 @@ export default function SettingsScreen({ navigation }) {
 
 
   const renderHeader = () => (
-    <View style={styles.header}>
-      <View style={styles.headerLeft}>
-        <View style={styles.logoContainer}>
-          <View style={styles.logoIconWrapper}>
-            <Ionicons name="eye" size={28} color={COLORS.primary} />
-          </View>
-          <View style={styles.appNameContainer}>
-            <Text style={styles.appName}>
-              <Text style={styles.visionText}>Vision</Text>
-              <Text style={styles.allyText}>Ally</Text>
-            </Text>
-          </View>
-        </View>
+    <LinearGradient
+      colors={[COLORS.inkDark, COLORS.inkSoft]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 0 }}
+      style={styles.heroHeader}
+    >
+      <View style={styles.heroContent}>
+        <Text style={styles.heroTitle}>Profile</Text>
+        <Text style={styles.heroTitle2}>Settings</Text>
+        <Text style={styles.heroSub}>
+          Manage your account & preferences
+        </Text>
       </View>
-      <Text style={styles.headerSubtitle}>Settings & Preferences</Text>
-    </View>
+      <View style={styles.heroDeco1} />
+      <View style={styles.heroDeco2} />
+    </LinearGradient>
   );
 
   const renderProfileSection = () => (
@@ -858,8 +859,10 @@ export default function SettingsScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.inkDark} />
       {renderHeader()}
 
+      <View style={styles.contentSheet}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -879,6 +882,7 @@ export default function SettingsScreen({ navigation }) {
 
         <View style={{ height: 100 }} />
       </ScrollView>
+      </View>
     </View>
   );
 }
@@ -900,56 +904,37 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   header: {
+    // kept for backward compatibility
+  },
+  // Fixed Hero Header (matching JobTrends)
+  heroHeader: {
+    paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 20,
+    paddingBottom: 44, paddingHorizontal: 24,
+    position: 'relative', overflow: 'hidden',
+  },
+  heroContent: { zIndex: 2 },
+  heroTitle: { fontSize: 30, fontWeight: '900', color: '#FFFFFF', letterSpacing: -0.5 },
+  heroTitle2: { fontSize: 30, fontWeight: '900', color: COLORS.primaryLight, letterSpacing: -0.5 },
+  heroSub: {
+    fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: '500', marginTop: 6,
+  },
+  heroDeco1: {
+    position: 'absolute', right: -30, top: -30,
+    width: 160, height: 160, borderRadius: 80,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  heroDeco2: {
+    position: 'absolute', right: 50, bottom: -50,
+    width: 120, height: 120, borderRadius: 60,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  // Content sheet with rounded top corners
+  contentSheet: {
+    flex: 1,
     backgroundColor: COLORS.backgroundSecondary,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    ...Platform.select({
-      ios: {
-
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  headerLeft: {
-    marginBottom: 8,
-  },
-  logoContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  logoIconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: `${COLORS.primary}15`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  appNameContainer: {
-    flexDirection: 'column',
-  },
-  appName: {
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-  visionText: {
-    color: COLORS.textPrimary,
-    fontWeight: '800',
-  },
-  allyText: {
-    color: COLORS.primary,
-    fontWeight: '800',
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
-    marginLeft: 54,
+    borderTopLeftRadius: 28,
+    marginTop: -20,
+    overflow: 'hidden',
   },
   scrollView: {
     flex: 1,
