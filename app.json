@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "",
+    "name": "VA",
     "slug": "VisionAlly",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false, 
     "splash": {
       "image": "./assets/logo.png",
       "resizeMode": "contain",
@@ -27,6 +27,28 @@
     },
     "web": {
       "favicon": "./assets/logo.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "VisionAlly needs camera access for your mock interview session.",
+          "microphonePermission": "VisionAlly needs microphone access to hear your interview responses.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "VisionAlly needs microphone access to hear your interview responses."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "VisionAlly needs photo library access so you can upload a job offer image."
+        }
+      ]
+    ]
   }
 }

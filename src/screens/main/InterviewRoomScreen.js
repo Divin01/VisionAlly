@@ -11,7 +11,7 @@ import {
   Platform, StatusBar, Alert, ActivityIndicator, Dimensions,
 } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
-import { Audio }         from 'expo-av';
+import * as Audio        from 'expo-audio';
 import * as FileSystem   from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons }      from '@expo/vector-icons';
@@ -109,37 +109,96 @@ export default function InterviewRoomScreen({ navigation, route }) {
     Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, []);
 
+  // ─── Safe Navigation Helper ───────────────────────────────────────────────────
+  const safeGoBack = useCallback(() => {
+    try {
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        // Can't go back → navigate to Interviewer tab
+        navigation.navigate('Main', { screen: 'interviewer' });
+      }
+    } catch (err) {
+      try {
+        navigation.navigate('Main');
+      } catch (e) {
+        console.error('❌ [InterviewRoom] All navigation attempts failed:', e);
+      }
+    }
+  }, [navigation]);
+
   // ─── Initialise on mount ─────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
+      console.log('\n🚀 [InterviewRoom] Initializing interview room...');
+      
       // 1. Request permissions
-      if (!cameraPermission?.granted)  await requestCamera();
-      if (!micPermission?.granted)     await requestMic();
+      console.log('📹 [InterviewRoom] Requesting permissions...');
+      if (!cameraPermission?.granted) {
+        console.log('📹 [InterviewRoom] Requesting camera permission...');
+        await requestCamera();
+      }
+      if (!micPermission?.granted) {
+        console.log('🎤 [InterviewRoom] Requesting mic permission...');
+        await requestMic();
+      }
+      console.log('✅ [InterviewRoom] Permissions granted');
 
       // 2. Configure expo-av audio session
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS:              true,
-        playsInSilentModeIOS:            true,
-        staysActiveInBackground:         false,
-        interruptionModeIOS:             Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-        interruptionModeAndroid:         Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
-        shouldDuckAndroid:               false,
-        playThroughEarpieceAndroid:      false,
-      });
+      console.log('🔊 [InterviewRoom] Configuring audio session...');
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS:              true,
+          playsInSilentModeIOS:            true,
+          staysActiveInBackground:         false,
+          shouldDuckAndroid:               false,
+          playThroughEarpieceAndroid:      false,
+        });
+        console.log('✅ [InterviewRoom] Audio session configured');
+      } catch (audioErr) {
+        console.error('❌ [InterviewRoom] Audio config failed:', audioErr);
+        console.error('❌ [InterviewRoom] Audio error details:', audioErr.message);
+        Alert.alert('Audio Setup Failed', 'Could not configure audio. Please try again.');
+        safeGoBack();
+        return;
+      }
 
       setLoadingMsg('Building your personalised session…');
 
       // 3. Build system instruction from profile + job context
-      const sysInstruction = buildSystemInstruction(profile ?? {}, jobText ?? '');
+      let sysInstruction;
+      try {
+        console.log('📝 [InterviewRoom] Building system instruction...');
+        sysInstruction = buildSystemInstruction(profile ?? {}, jobText ?? '');
+        console.log('✅ [InterviewRoom] System instruction built');
+      } catch (sysErr) {
+        console.error('❌ [InterviewRoom] System instruction build failed:', sysErr);
+        console.error('❌ [InterviewRoom] Error details:', sysErr.message);
+        Alert.alert('Setup Failed', 'Could not prepare your session. Please try again.');
+        safeGoBack();
+        return;
+      }
 
       setLoadingMsg('Connecting to VisionAlly AI…');
 
       // 4. Create and connect Gemini Live service
-      geminiSvc.current = new GeminiLiveService();
+      try {
+        console.log('🤖 [InterviewRoom] Creating GeminiLiveService...');
+        geminiSvc.current = new GeminiLiveService();
+        console.log('✅ [InterviewRoom] GeminiLiveService created');
+      } catch (svcErr) {
+        console.error('❌ [InterviewRoom] GeminiLiveService creation failed:', svcErr);
+        console.error('❌ [InterviewRoom] Error details:', svcErr.message);
+        Alert.alert('Service Error', 'Could not initialize AI service. Please try again.');
+        safeGoBack();
+        return;
+      }
 
       geminiSvc.current.onSetupComplete = () => {
+        console.log('✅ [InterviewRoom] *** SETUP COMPLETE ***');
         setLoadingMsg('Almost ready…');
         // Trigger the AI intro speech
+        console.log('🎙️ [InterviewRoom] Sending AI intro prompt...');
         geminiSvc.current.sendTextPrompt(
           `Hello, please greet the user by their first name (${profile?.firstName ?? 'there'}) ` +
           `and introduce yourself as VisionAlly in 2-3 warm sentences. ` +
@@ -152,13 +211,16 @@ export default function InterviewRoomScreen({ navigation, route }) {
       };
 
       geminiSvc.current.onTurnComplete = () => {
+        console.log('✅ [InterviewRoom] Turn complete from AI');
         // After AI finishes speaking in LOADING → transition to READY
         if (roomState === STATE.LOADING) {
+          console.log('🎯 [InterviewRoom] Transitioning to READY state');
           setRoomState(STATE.READY);
           setStatusLabel('Tap "Start" to begin');
         }
         // During interview → enable mic for user response
         if (roomState === STATE.AI_SPEAKING || roomState === STATE.INTERVIEWING) {
+          console.log('🎙️ [InterviewRoom] User turn - enabling microphone');
           setRoomState(STATE.USER_SPEAKING);
           setStatusLabel('Your turn — speak now');
           if (!isMutedRef.current) startMicCapture();
@@ -166,6 +228,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
       };
 
       geminiSvc.current.onInterrupted = () => {
+        console.log('⚡ [InterviewRoom] AI interrupted - user started speaking');
         stopPlayback();
         if (!isMutedRef.current) startMicCapture();
         setRoomState(STATE.USER_SPEAKING);
@@ -173,22 +236,26 @@ export default function InterviewRoomScreen({ navigation, route }) {
       };
 
       geminiSvc.current.onSessionEnded = () => {
+        console.log('🏁 [InterviewRoom] Session ended from server');
         handleSessionEnd(false);
       };
 
       geminiSvc.current.onError = (err) => {
-        console.error('[InterviewRoom] Gemini error:', err);
+        console.error('❌ [InterviewRoom] Gemini error:', err);
         Alert.alert('Connection Issue', 'Could not connect to the AI. Please check your internet and try again.');
-        navigation.goBack();
+        safeGoBack();
       };
 
       try {
+        console.log('🔌 [InterviewRoom] Attempting to connect to Gemini Live...');
         await geminiSvc.current.connect(sysInstruction);
+        console.log('✅ [InterviewRoom] Connected to Gemini Live!');
         sessionStartRef.current = Date.now();
       } catch (err) {
-        console.error('[InterviewRoom] connect failed:', err);
+        console.error('❌ [InterviewRoom] Connect failed:', err);
+        console.error('❌ [InterviewRoom] Error details:', err.message);
         Alert.alert('Connection Failed', 'Could not reach the AI service. Please try again.');
-        navigation.goBack();
+        safeGoBack();
       }
     })();
 
@@ -237,8 +304,12 @@ export default function InterviewRoomScreen({ navigation, route }) {
    * and send raw PCM to Gemini Live. Re-starts automatically for continuous streaming.
    */
   const startMicCapture = useCallback(async () => {
-    if (recordingRef.current) return; // already recording
+    if (recordingRef.current) {
+      console.log('⚠️ [InterviewRoom] Mic already recording, ignoring start');
+      return; // already recording
+    }
     try {
+      console.log('🎤 [InterviewRoom] Starting microphone capture...');
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync({
         android: {
@@ -360,27 +431,35 @@ export default function InterviewRoomScreen({ navigation, route }) {
           style: 'destructive',
           onPress: async () => {
             await cleanup();
-            navigation.goBack();
+            safeGoBack();
           },
         },
       ]
     );
-  }, [cleanup]);
+  }, [cleanup, safeGoBack]);
 
   // ─── Start Interview (user taps "Start") ─────────────────────────────────────
   const handleStart = useCallback(async () => {
-    if (roomState !== STATE.READY) return;
+    console.log('🎬 [InterviewRoom] User tapped START button');
+    if (roomState !== STATE.READY) {
+      console.log('⚠️ [InterviewRoom] Not in READY state, ignoring start tap');
+      return;
+    }
+    console.log('▶️ [InterviewRoom] Transitioning to INTERVIEWING state');
     setRoomState(STATE.INTERVIEWING);
     setQuestionIndex(1);
     setStatusLabel('Starting…');
 
     // Begin video capture for non-verbal analysis
+    console.log('📹 [InterviewRoom] Starting video capture');
     startVideoCapture();
 
     // Prompt AI to start the interview (Q1)
+    console.log('💬 [InterviewRoom] Sending start prompt to AI');
     geminiSvc.current?.sendTextPrompt(
       'The user has clicked Start. Begin the interview immediately with Question 1. Do not re-introduce yourself.'
     );
+    console.log('🔊 [InterviewRoom] AI now speaking (STATE.AI_SPEAKING)');
     setRoomState(STATE.AI_SPEAKING);
   }, [roomState, startVideoCapture]);
 

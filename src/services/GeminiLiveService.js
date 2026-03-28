@@ -4,11 +4,12 @@
 // Follows best practices from: https://ai.google.dev/gemini-api/docs/live-api
 
 import * as FileSystem from 'expo-file-system';
-import { Audio } from 'expo-av';
+import * as Audio from 'expo-audio';
+import CONFIG from '../../config';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE'; // Replace before running
-const GEMINI_MODEL   = 'gemini-live-2.5-flash';
+const GEMINI_API_KEY = CONFIG.GEMINI_API_KEY;
+const GEMINI_MODEL   = 'gemini-2.0-flash-exp';
 const WS_URL         = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
 
 // Audio settings (must match Gemini Live requirements)
@@ -155,9 +156,21 @@ export class GeminiLiveService {
   async connect(systemInstruction) {
     return new Promise((resolve, reject) => {
       try {
+        console.log('[GeminiLive] Initializing WebSocket connection...');
+        console.log('[GeminiLive] API Key configured:', !!GEMINI_API_KEY && GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY_HERE');
+        
+        if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
+          const err = new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in config.js');
+          console.error('[GeminiLive]', err.message);
+          if (this.onError) this.onError(err);
+          reject(err);
+          return;
+        }
+
         this._ws = new WebSocket(WS_URL);
 
         this._ws.onopen = () => {
+          console.log('[GeminiLive] WebSocket connected, sending setup...');
           this._isConnected = true;
           // Send setup message immediately on connection
           const setupMsg = {
@@ -190,8 +203,9 @@ export class GeminiLiveService {
 
         this._ws.onerror = (err) => {
           console.error('[GeminiLive] WebSocket error:', err);
-          if (this.onError) this.onError(new Error('WebSocket connection error'));
-          reject(err);
+          const errorMsg = 'WebSocket connection error. Check your API key and internet connection.';
+          if (this.onError) this.onError(new Error(errorMsg));
+          reject(new Error(errorMsg));
         };
 
         this._ws.onclose = (evt) => {
@@ -200,6 +214,7 @@ export class GeminiLiveService {
           if (evt.code !== 1000 && this.onSessionEnded) this.onSessionEnded();
         };
       } catch (err) {
+        console.error('[GeminiLive] Connection error:', err);
         reject(err);
       }
     });

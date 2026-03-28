@@ -1,1187 +1,732 @@
-import React, { useState } from 'react';
+// src/screens/main/HomeScreen.js
+// VisionAlly Home — Clean blue/black professional design
+// Sections: Header · Market Trends · For You Jobs · Interview Tips
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Dimensions,
-  RefreshControl,
-  StatusBar,
-  Platform,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  Image, Platform, StatusBar, ActivityIndicator,
+  Linking, Alert, Animated, Dimensions, Modal,
+  TextInput, KeyboardAvoidingView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import {logo} from './../../../assets/logo.png'
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, firestore } from '../../../firebase';
+import { COLORS } from '../../constants/colors';
+import {
+  fetchJobsForUser,
+  fetchMarketTrends,
+  JOB_CATEGORIES,
+} from '../../services/JobService';
+import { InterviewStorageService } from '../../services/InterviewStorageService';
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-const COLORS = {
-  primary: '#8B5CF6',
-  primaryDark: '#7C3AED',
-  primaryLight: '#A78BFA',
-  primaryVeryLight: '#EDE9FE',
-  background: '#FFFFFF',
-  backgroundSecondary: '#F9FAFB',
-  textPrimary: '#111827',
-  textSecondary: '#6B7280',
-  textTertiary: '#9CA3AF',
-  success: '#10B981',
-  error: '#EF4444',
-  warning: '#F59E0B',
-  border: '#E5E7EB',
-  borderLight: '#F3F4F6',
-  white: '#FFFFFF',
-  black: '#000000',
-  transparent: 'transparent',
-};
+const { width: W } = Dimensions.get('window');
+const TREND_CARD_W = W * 0.38;
+const JOB_CARD_W   = W - 48; // full-width minus padding
 
-export default function HomeScreen({ navigation, onNavigateToReports }) {
-  const [refreshing, setRefreshing] = useState(false);
+// ─── Interview Tips data ──────────────────────────────────────────────────────
+const TIPS = [
+  {
+    id: '1',
+    icon:    'search-outline',
+    color:   COLORS.primary,
+    title:   'Research the Company',
+    text:    'Spend 20 min on their website, LinkedIn, and recent news before the interview.',
+  },
+  {
+    id: '2',
+    icon:    'star-outline',
+    color:   '#10B981',
+    title:   'Use the STAR Method',
+    text:    'Structure every answer: Situation → Task → Action → Result. Keep it under 2 min.',
+  },
+  {
+    id: '3',
+    icon:    'body-outline',
+    color:   '#F59E0B',
+    title:   'Body Language Counts',
+    text:    'Eye contact, upright posture, and calm breathing signal confidence to interviewers.',
+  },
+];
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    // Simulate a small delay for visual feedback
-    await new Promise(resolve => setTimeout(resolve, 500));
-    setRefreshing(false);
+// ─── Skills Prompt Modal ──────────────────────────────────────────────────────
+const SkillsPromptModal = ({ visible, onSave, onSkip }) => {
+  const [s1, setS1] = useState('');
+  const [s2, setS2] = useState('');
+  const [s3, setS3] = useState('');
+
+  const handleSave = () => {
+    const skills = [s1, s2, s3].map(s => s.trim()).filter(Boolean);
+    if (skills.length === 0) { onSkip(); return; }
+    onSave(skills);
   };
 
   return (
-    <View style={styles.container}>
-      
-      {/* Gradient Background Header */}
-      <LinearGradient
-        colors={['rgba(139, 92, 246, 0.08)', 'transparent']}
-        style={styles.gradientOverlay}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-      />
+    <Modal visible={visible} transparent animationType="slide">
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.modalSheet}>
+          {/* Handle bar */}
+          <View style={styles.modalHandle} />
 
-      {/* Custom Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.logoContainer}>
-            <View style={styles.logoIconWrapper}>
-              <Ionicons name="eye" size={30} color={COLORS.primary} />
-            </View>
-            <View style={styles.appNameContainer}>
-              <Text style={styles.appName}>
-                <Text style={styles.visionText}>Vision</Text>
-                <Text style={styles.allyText}>Ally</Text>
-              </Text>
-              <View style={styles.tagline}>
-                <Text style={styles.taglineText}>Your career coach Companion</Text>
-              </View>
-            </View>
+          <View style={styles.modalIconWrap}>
+            <LinearGradient colors={[COLORS.primary, COLORS.primaryDark]} style={styles.modalIcon}>
+              <Ionicons name="flash" size={24} color={COLORS.white} />
+            </LinearGradient>
           </View>
-        </View>
-        
-        <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.notificationIcon}>
-            <Ionicons name="notifications-outline" size={26} color={COLORS.textPrimary} />
-            <View style={styles.notificationDot} />
+
+          <Text style={styles.modalTitle}>Set Your Top Skills</Text>
+          <Text style={styles.modalSub}>
+            We'll use these to find the most relevant jobs and opportunities for you. You can always update them later in Settings.
+          </Text>
+
+          {[
+            { val: s1, set: setS1, ph: 'Skill 1 — e.g. React Native', n: 1 },
+            { val: s2, set: setS2, ph: 'Skill 2 — e.g. Project Management', n: 2 },
+            { val: s3, set: setS3, ph: 'Skill 3 — e.g. Data Analysis', n: 3 },
+          ].map(({ val, set, ph, n }) => (
+            <View key={n} style={styles.modalInputRow}>
+              <View style={styles.modalInputBadge}>
+                <Text style={styles.modalInputBadgeText}>{n}</Text>
+              </View>
+              <TextInput
+                style={styles.modalInput}
+                placeholder={ph}
+                placeholderTextColor={COLORS.textTertiary}
+                value={val}
+                onChangeText={set}
+                autoCapitalize="words"
+              />
+            </View>
+          ))}
+
+          <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSave}>
+            <LinearGradient colors={[COLORS.primary, COLORS.primaryDark]} style={styles.modalSaveBtnGradient}>
+              <Text style={styles.modalSaveBtnText}>Find My Jobs →</Text>
+            </LinearGradient>
           </TouchableOpacity>
+
+          <TouchableOpacity style={styles.modalSkipBtn} onPress={onSkip}>
+            <Text style={styles.modalSkipText}>Skip for now</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
+
+// ─── Trend Card ───────────────────────────────────────────────────────────────
+const TrendCard = ({ item }) => {
+  const isUp    = item.trend === 'up';
+  const pct     = Math.abs(item.trendPct);
+  const loading = item.count === 0;
+
+  return (
+    <View style={[styles.trendCard, { borderTopColor: item.color }]}>
+      <View style={[styles.trendIconWrap, { backgroundColor: `${item.color}18` }]}>
+        <Ionicons name={item.icon} size={18} color={item.color} />
+      </View>
+      <Text style={styles.trendLabel} numberOfLines={1}>{item.label}</Text>
+      {loading ? (
+        <ActivityIndicator size="small" color={COLORS.textTertiary} style={{ marginTop: 4 }} />
+      ) : (
+        <>
+          <Text style={styles.trendCount}>
+            {item.count > 999 ? `${(item.count / 1000).toFixed(1)}k` : item.count}
+          </Text>
+          <View style={styles.trendBadge}>
+            <Ionicons
+              name={isUp ? 'arrow-up' : 'remove'}
+              size={10}
+              color={isUp ? COLORS.success : COLORS.textTertiary}
+            />
+            <Text style={[styles.trendBadgeText, { color: isUp ? COLORS.success : COLORS.textTertiary }]}>
+              {isUp ? `+${pct}%` : 'Stable'}
+            </Text>
+          </View>
+        </>
+      )}
+    </View>
+  );
+};
+
+// ─── Job Card ─────────────────────────────────────────────────────────────────
+const JobCard = ({ job }) => {
+  const handleApply = async () => {
+    try {
+      await Linking.openURL(job.applyUrl);
+    } catch {
+      Alert.alert('Could not open link', 'Please try again.');
+    }
+  };
+
+  // Get first letter of company for avatar
+  const initials = job.company.charAt(0).toUpperCase();
+
+  // Derive category color
+  const catMeta = JOB_CATEGORIES.find(c => c.tag === job.categoryTag);
+  const catColor = catMeta?.color ?? COLORS.primary;
+
+  return (
+    <View style={styles.jobCard}>
+      {/* Header row */}
+      <View style={styles.jobCardHeader}>
+        {/* Company Avatar */}
+        <View style={[styles.companyAvatar, { backgroundColor: `${catColor}18` }]}>
+          <Text style={[styles.companyAvatarText, { color: catColor }]}>{initials}</Text>
+        </View>
+
+        {/* Company + title */}
+        <View style={styles.jobCardTitles}>
+          <Text style={styles.jobTitle} numberOfLines={1}>{job.title}</Text>
+          <Text style={styles.jobCompany} numberOfLines={1}>{job.company}</Text>
+        </View>
+
+        {/* Posted time */}
+        <Text style={styles.jobPosted}>{job.postedAt}</Text>
+      </View>
+
+      {/* Meta row */}
+      <View style={styles.jobMetaRow}>
+        <View style={styles.jobMetaItem}>
+          <Ionicons name="location-outline" size={12} color={COLORS.textTertiary} />
+          <Text style={styles.jobMetaText} numberOfLines={1}>{job.location}</Text>
+        </View>
+        {job.salary && (
+          <View style={styles.jobMetaItem}>
+            <Ionicons name="cash-outline" size={12} color={COLORS.success} />
+            <Text style={[styles.jobMetaText, { color: COLORS.success }]}>{job.salary}</Text>
+          </View>
+        )}
+        <View style={[styles.jobTypePill, { backgroundColor: `${catColor}18` }]}>
+          <Text style={[styles.jobTypePillText, { color: catColor }]}>
+            {job.type === 'full_time' ? 'Full-time' : job.type === 'part_time' ? 'Part-time' : job.type ?? 'Full-time'}
+          </Text>
         </View>
       </View>
 
-      {/* Main Content */}
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={COLORS.primary}
-            colors={[COLORS.primary]}
-          />
+      {/* Description */}
+      <Text style={styles.jobDesc} numberOfLines={2}>{job.description}</Text>
+
+      {/* Divider + Apply */}
+      <View style={styles.jobCardFooter}>
+        <View style={styles.jobCatChip}>
+          <Ionicons name={catMeta?.icon ?? 'briefcase-outline'} size={11} color={catColor} />
+          <Text style={[styles.jobCatChipText, { color: catColor }]}>{job.category}</Text>
+        </View>
+
+        {/* Apply — Black button per user preference */}
+        <TouchableOpacity style={styles.applyBtn} onPress={handleApply} activeOpacity={0.85}>
+          <Text style={styles.applyBtnText}>Apply →</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+// ─── Main HomeScreen ──────────────────────────────────────────────────────────
+export default function HomeScreen({ navigation }) {
+  const [userName,      setUserName]      = useState('');
+  const [userSkills,    setUserSkills]    = useState([]);
+  const [showSkillsModal,setShowSkillsModal] = useState(false);
+  const [trends,        setTrends]        = useState(
+    JOB_CATEGORIES.slice(0, 6).map(c => ({ ...c, count: 0, trend: 'stable', trendPct: 0 }))
+  );
+  const [jobs,          setJobs]          = useState([]);
+  const [jobsLoading,   setJobsLoading]   = useState(true);
+  const [trendsLoading, setTrendsLoading] = useState(true);
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // ── Greeting ──────────────────────────────────────────────────────────────
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  })();
+
+  // ── Load user data & check skills ────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      const uid = auth.currentUser?.uid;
+
+      // Get display name
+      const displayName = auth.currentUser?.displayName ?? '';
+      setUserName(displayName.split(' ')[0] || 'there');
+
+      if (!uid) return;
+
+      try {
+        // Try Firestore first
+        const snap    = await getDoc(doc(firestore, 'users', uid, 'profile', 'about_me'));
+        const profile = snap.exists() ? snap.data() : null;
+
+        if (profile?.skills?.length > 0) {
+          setUserSkills(profile.skills.filter(Boolean));
+        } else {
+          // Fall back to local cache
+          const cached = await InterviewStorageService.getCachedAboutMe();
+          if (cached?.skills?.length > 0) {
+            setUserSkills(cached.skills.filter(Boolean));
+          } else {
+            // First time / no skills → show prompt after short delay
+            setTimeout(() => setShowSkillsModal(true), 1200);
+          }
         }
+
+        if (displayName && !profile?.firstName) {
+          setUserName(displayName.split(' ')[0]);
+        } else if (profile?.firstName) {
+          setUserName(profile.firstName);
+        }
+      } catch {
+        const cached = await InterviewStorageService.getCachedAboutMe();
+        if (cached?.skills?.length > 0) setUserSkills(cached.skills.filter(Boolean));
+        else setTimeout(() => setShowSkillsModal(true), 1200);
+      }
+
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+    })();
+  }, []);
+
+  // ── Load jobs when skills are known ─────────────────────────────────────
+  useEffect(() => {
+    if (userSkills.length > 0) loadJobs(userSkills);
+  }, [userSkills]);
+
+  // ── Load trends once ─────────────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      const data = await fetchMarketTrends();
+      setTrends(data);
+      setTrendsLoading(false);
+    })();
+  }, []);
+
+  const loadJobs = useCallback(async (skills) => {
+    setJobsLoading(true);
+    const result = await fetchJobsForUser(skills, 1);
+    setJobs(result.jobs);
+    setJobsLoading(false);
+  }, []);
+
+  // ── Skills modal save ────────────────────────────────────────────────────
+  const handleSkillsSave = useCallback(async (skills) => {
+    setShowSkillsModal(false);
+    setUserSkills(skills);
+    // Cache locally
+    await InterviewStorageService.cacheAboutMe({ skills });
+    loadJobs(skills);
+  }, [loadJobs]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+
+      {/* Skills Prompt Modal */}
+      <SkillsPromptModal
+        visible={showSkillsModal}
+        onSave={handleSkillsSave}
+        onSkip={() => { setShowSkillsModal(false); loadJobs([]); }}
+      />
+
+      {/* ── Hero Header Gradient ─────────────────────────────────────────── */}
+      <LinearGradient
+        colors={[COLORS.primaryDark, COLORS.primary, '#4F86F7']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.heroGradient}
+      />
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
       >
-
-        {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickActionsGrid}>
-            <TouchableOpacity style={styles.actionCardSmall}>
-              <View style={[styles.actionIconSmall, { backgroundColor: `${COLORS.primary}20` }]}>
-                <Ionicons name="briefcase" size={18} color={COLORS.primary} />
-              </View>
-              <Text style={styles.actionCardText}>Browse Jobs</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionCardSmall}>
-              <View style={[styles.actionIconSmall, { backgroundColor: `${COLORS.success}20` }]}>
-                <Ionicons name="document" size={18} color={COLORS.success} />
-              </View>
-              <Text style={styles.actionCardText}>My CV</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionCardSmall}>
-              <View style={[styles.actionIconSmall, { backgroundColor: `${COLORS.warning}20` }]}>
-                <Ionicons name="videocam" size={18} color={COLORS.warning} />
-              </View>
-              <Text style={styles.actionCardText}>Interview Prep</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionCardSmall}>
-              <View style={[styles.actionIconSmall, { backgroundColor: `${COLORS.error}20` }]}>
-                <Ionicons name="heart" size={18} color={COLORS.error} />
-              </View>
-              <Text style={styles.actionCardText}>Saved Jobs</Text>
-            </TouchableOpacity>
+        {/* ── TOP BAR ───────────────────────────────────────────────────── */}
+        <View style={styles.topBar}>
+          {/* Logo */}
+          <View style={styles.logoWrap}>
+            <Image
+              source={require('../../../assets/logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
           </View>
+
+          {/* Notification Bell */}
+          <TouchableOpacity style={styles.bellBtn} activeOpacity={0.8}>
+            <Ionicons name="notifications-outline" size={22} color={COLORS.white} />
+            {/* Red dot */}
+            <View style={styles.bellDot} />
+          </TouchableOpacity>
         </View>
 
-        {/* Job Trends Section */}
-        <View style={styles.section}>
+        {/* ── Greeting ─────────────────────────────────────────────────── */}
+        <Animated.View style={[styles.greetingBlock, { opacity: fadeAnim }]}>
+          <Text style={styles.greetingLine}>{greeting},</Text>
+          <Text style={styles.greetingName}>{userName} 👋</Text>
+          <Text style={styles.greetingSub}>
+            {userSkills.length > 0
+              ? `${userSkills.slice(0, 2).join(' · ')} · SA Jobs`
+              : 'Finding opportunities in South Africa'}
+          </Text>
+        </Animated.View>
+
+        {/* ── White content area ───────────────────────────────────────── */}
+        <View style={styles.contentArea}>
+
+          {/* ════════════════════════════════════════════════════════════ */}
+          {/*  SECTION 1 — Job Market Trends                              */}
+          {/* ════════════════════════════════════════════════════════════ */}
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Job Market Trends</Text>
-            <TouchableOpacity>
-              <Text style={styles.viewAllText}>View All</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.trendCard}>
-            <View style={styles.trendHeader}>
-              <View>
-                <Text style={styles.trendTitle}>Most Demanded Skills in 2025</Text>
-                <Text style={styles.trendSubtitle}>Top skills employers are seeking</Text>
-              </View>
-              <View style={styles.trendBadge}>
-                <Text style={styles.trendBadgeText}>↑ 12%</Text>
-              </View>
+            <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionDot, { backgroundColor: COLORS.primary }]} />
+              <Text style={styles.sectionTitle}>🔥 Market Trends</Text>
             </View>
-            <View style={styles.skillsList}>
-              <View style={styles.skillItem}>
-                <Text style={styles.skillName}>Full Stack Development</Text>
-                <View style={styles.skillBar}>
-                  <View style={[styles.skillFill, { width: '92%' }]} />
-                </View>
-              </View>
-              <View style={styles.skillItem}>
-                <Text style={styles.skillName}>Data Analysis</Text>
-                <View style={styles.skillBar}>
-                  <View style={[styles.skillFill, { width: '88%' }]} />
-                </View>
-              </View>
-              <View style={styles.skillItem}>
-                <Text style={styles.skillName}>Cloud Computing</Text>
-                <View style={styles.skillBar}>
-                  <View style={[styles.skillFill, { width: '85%' }]} />
-                </View>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Featured Opportunities */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>For You</Text>
-            <TouchableOpacity>
-              <Text style={styles.viewAllText}>See More</Text>
+            <TouchableOpacity
+              onPress={() => navigation.getParent()?.jumpTo('jobtrends')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewAllText}>View All →</Text>
             </TouchableOpacity>
           </View>
 
-          <View style={styles.jobCard}>
-            <View style={styles.jobCardHeader}>
-              <View style={styles.jobCardIconContainer}>
-                <Ionicons name="business" size={20} color={COLORS.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.jobCardTitle}>UX/UI Designer</Text>
-                <Text style={styles.jobCardCompany}>Creative Studios Inc.</Text>
-              </View>
-              <Ionicons name="heart-outline" size={22} color={COLORS.textSecondary} />
-            </View>
-            <View style={styles.jobCardDetails}>
-              <View style={styles.jobDetailTag}>
-                <Ionicons name="location-outline" size={14} color={COLORS.primary} />
-                <Text style={styles.jobDetailText}>Johannesburg, SA</Text>
-              </View>
-              <View style={styles.jobDetailTag}>
-                <Ionicons name="briefcase-outline" size={14} color={COLORS.primary} />
-                <Text style={styles.jobDetailText}>3 years experience</Text>
-              </View>
-              <View style={styles.jobDetailTag}>
-                <Ionicons name="cash-outline" size={14} color={COLORS.primary} />
-                <Text style={styles.jobDetailText}>R 45,000 - R 65,000</Text>
-              </View>
-            </View>
-            <TouchableOpacity style={styles.applyButton}>
-              <Text style={styles.applyButtonText}>Apply Now</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.jobCard}>
-            <View style={styles.jobCardHeader}>
-              <View style={styles.jobCardIconContainer}>
-                <Ionicons name="business" size={20} color={COLORS.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.jobCardTitle}>Customer Support Manager</Text>
-                <Text style={styles.jobCardCompany}>RetailPro Solutions</Text>
-              </View>
-              <Ionicons name="heart-outline" size={22} color={COLORS.textSecondary} />
-            </View>
-            <View style={styles.jobCardDetails}>
-              <View style={styles.jobDetailTag}>
-                <Ionicons name="location-outline" size={14} color={COLORS.primary} />
-                <Text style={styles.jobDetailText}>Cape Town, SA</Text>
-              </View>
-              <View style={styles.jobDetailTag}>
-                <Ionicons name="briefcase-outline" size={14} color={COLORS.primary} />
-                <Text style={styles.jobDetailText}>2+ years experience</Text>
-              </View>
-              <View style={styles.jobDetailTag}>
-                <Ionicons name="cash-outline" size={14} color={COLORS.primary} />
-                <Text style={styles.jobDetailText}>R 32,000 - R 48,000</Text>
-              </View>
-            </View>
-            <TouchableOpacity style={styles.applyButton}>
-              <Text style={styles.applyButtonText}>Apply Now</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Interview Tips */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Interview Tips</Text>
-          
-          <View style={styles.tipCard}>
-            <View style={[styles.tipIconContainer, { backgroundColor: `${COLORS.primary}20` }]}>
-              <Ionicons name="bulb" size={24} color={COLORS.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tipTitle}>Body Language Matters</Text>
-              <Text style={styles.tipDescription}>
-                Maintain eye contact, sit upright, and smile naturally
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
-          </View>
-
-          <View style={styles.tipCard}>
-            <View style={[styles.tipIconContainer, { backgroundColor: `${COLORS.success}20` }]}>
-              <Ionicons name="checkmark-circle" size={24} color={COLORS.success} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tipTitle}>Research the Company</Text>
-              <Text style={styles.tipDescription}>
-                Know about the company's mission, culture, and recent news
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
-          </View>
-
-          <View style={styles.tipCard}>
-            <View style={[styles.tipIconContainer, { backgroundColor: `${COLORS.warning}20` }]}>
-              <Ionicons name="help-circle" size={24} color={COLORS.warning} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tipTitle}>Prepare Your Answers</Text>
-              <Text style={styles.tipDescription}>
-                Practice common questions and your STAR method responses
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
-          </View>
-        </View>
-
-        {/* Accessibility Features */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Accessibility</Text>
-          
-          <LinearGradient
-            colors={['rgba(16, 185, 129, 0.08)', 'rgba(16, 185, 129, 0.02)']}
-            style={styles.accessibilityCard}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.trendScroll}
           >
-            <View style={styles.accessibilityContent}>
-              <View>
-                <Text style={styles.accessibilityTitle}>Accommodations Support</Text>
-                <Text style={styles.accessibilityDescription}>
-                  Filter jobs with specific accessibility features and workplace accommodations
-                </Text>
-              </View>
-              <Ionicons name="accessibility" size={32} color={COLORS.success} />
+            {trendsLoading
+              ? Array(5).fill(0).map((_, i) => (
+                  <View key={i} style={[styles.trendCard, styles.trendCardSkeleton]} />
+                ))
+              : trends.map((item, idx) => <TrendCard key={idx} item={item} />)
+            }
+          </ScrollView>
+
+          {/* ════════════════════════════════════════════════════════════ */}
+          {/*  SECTION 2 — For You Jobs                                   */}
+          {/* ════════════════════════════════════════════════════════════ */}
+          <View style={[styles.sectionHeader, { marginTop: 24 }]}>
+            <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionDot, { backgroundColor: COLORS.ink }]} />
+              <Text style={styles.sectionTitle}>For You</Text>
             </View>
-            <TouchableOpacity style={styles.accessibilityButton}>
-              <Text style={styles.accessibilityButtonText}>Learn More</Text>
+            {userSkills.length > 0 && (
+              <View style={styles.skillsChipRow}>
+                {userSkills.slice(0, 2).map((s, i) => (
+                  <View key={i} style={styles.skillChip}>
+                    <Text style={styles.skillChipText}>{s}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {jobsLoading ? (
+            <View style={styles.jobsLoading}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+              <Text style={styles.jobsLoadingText}>Finding jobs for you…</Text>
+            </View>
+          ) : jobs.length === 0 ? (
+            <View style={styles.noJobs}>
+              <Ionicons name="briefcase-outline" size={36} color={COLORS.textTertiary} />
+              <Text style={styles.noJobsText}>No jobs found</Text>
+              <Text style={styles.noJobsSub}>Try updating your skills in About Me</Text>
+              <TouchableOpacity
+                style={styles.noJobsBtn}
+                onPress={() => navigation.getParent()?.jumpTo('interviewer')}
+              >
+                <Text style={styles.noJobsBtnText}>Update Skills</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.jobsList}>
+              {jobs.slice(0, 5).map(job => <JobCard key={job.id} job={job} />)}
+
+              {/* See More */}
+              <TouchableOpacity
+                style={styles.seeMoreBtn}
+                onPress={() => navigation.getParent()?.jumpTo('jobtrends')}
+                activeOpacity={0.85}
+              >
+                <LinearGradient
+                  colors={[COLORS.ink, COLORS.inkSoft]}
+                  style={styles.seeMoreGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <Text style={styles.seeMoreText}>See All Jobs</Text>
+                  <Ionicons name="arrow-forward" size={16} color={COLORS.white} />
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════ */}
+          {/*  SECTION 3 — Interview Tips                                 */}
+          {/* ════════════════════════════════════════════════════════════ */}
+          <View style={[styles.sectionHeader, { marginTop: 28 }]}>
+            <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionDot, { backgroundColor: '#F59E0B' }]} />
+              <Text style={styles.sectionTitle}>Interview Tips</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => navigation.getParent()?.jumpTo('interviewer')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewAllText}>Practice →</Text>
             </TouchableOpacity>
-          </LinearGradient>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tipsScroll}
+          >
+            {TIPS.map(tip => (
+              <View key={tip.id} style={styles.tipCard}>
+                <View style={[styles.tipIconWrap, { backgroundColor: `${tip.color}15` }]}>
+                  <Ionicons name={tip.icon} size={22} color={tip.color} />
+                </View>
+                <Text style={styles.tipTitle}>{tip.title}</Text>
+                <Text style={styles.tipText}>{tip.text}</Text>
+              </View>
+            ))}
+          </ScrollView>
+
         </View>
 
-        {/* Bottom Spacing */}
-        <View style={{ height: 100 }} />
+        <View style={{ height: 110 }} />
       </ScrollView>
     </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const HERO_H = Platform.OS === 'ios' ? 260 : 240;
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FAFAFA',
+  container: { flex: 1, backgroundColor: COLORS.backgroundSecondary },
+
+  heroGradient: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    height: HERO_H, zIndex: 0,
   },
-  gradientOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: Platform.OS === 'ios' ? 220 : 200,
-    zIndex: 0,
-  },
-  header: {
+
+  scrollContent: { paddingTop: 0 },
+
+  // Top bar
+  topBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? 55 : (StatusBar.currentHeight || 0) + 16,
+    justifyContent: 'space-between',
+    paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 12,
     paddingHorizontal: 20,
-    paddingBottom: 15,
-    zIndex: 1,
+    paddingBottom: 8,
+    zIndex: 2,
   },
-  headerLeft: {
-    flex: 1,
+  logoWrap: { height: 36, justifyContent: 'center' },
+  logo:     { height: 32, width: 130 },
+
+  bellBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.20)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.30)',
   },
-  logoContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  bellDot: {
+    position: 'absolute', top: 9, right: 9,
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: '#EF4444', borderWidth: 1.5, borderColor: COLORS.white,
   },
-  logoIconWrapper: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: `${COLORS.primary}18`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
+
+  // Greeting
+  greetingBlock: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 28, zIndex: 2 },
+  greetingLine:  { fontSize: 14, color: 'rgba(255,255,255,0.80)', fontWeight: '500' },
+  greetingName:  { fontSize: 28, fontWeight: '800', color: COLORS.white, marginTop: 2 },
+  greetingSub:   { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 4, fontWeight: '500' },
+
+  // White content area (rounded top)
+  contentArea: {
+    backgroundColor: COLORS.background,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 24,
+    minHeight: 600,
+    marginTop: -16,
     ...Platform.select({
-      ios: {
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 10, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-      },
-      android: {
-        elevation: 2,
-      },
+      ios:     { shadowColor: '#000', shadowOffset:{width:0,height:-4}, shadowOpacity:0.06, shadowRadius:16 },
+      android: { elevation: 8 },
     }),
   },
-  appNameContainer: {
-    flexDirection: 'column',
-  },
-  appName: {
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-    lineHeight: 30,
-    textShadowColor: 'rgba(0,0,0,0.12)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  visionText: {
-    color: 'black',
-    fontWeight: '800',
-    textShadowColor: 'rgba(0,0,0,0.14)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  allyText: {
-    color: COLORS.primary,
-    fontWeight: '800',
-    textShadowColor: 'rgba(0,0,0,0.14)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  tagline: {
-    backgroundColor: `${COLORS.primary}15`,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginTop: 2,
-  },
-  taglineText: {
-    fontSize: 9,
-    color: COLORS.primaryDark,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  notificationIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: COLORS.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: -40,
-    ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  notificationDot: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 9,
-    height: 9,
-    borderRadius: 6,
-    backgroundColor: '#EF4444',
-    borderWidth: 2,
-    borderColor: '#EF4444',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingTop: 8,
-  },
-  bannerSection: {
-    paddingHorizontal: 20,
-    marginBottom: 24,
-  },
-  banner: {
-    padding: 20,
-    borderRadius: 16,
-    overflow: 'hidden',
-    minHeight: 200,
-    justifyContent: 'space-between',
-    ...Platform.select({
-      ios: {
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
-  },
-  bannerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    flex: 1,
-  },
-  bannerSubtitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.8)',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  bannerTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: COLORS.white,
-    marginBottom: 8,
-    lineHeight: 28,
-  },
-  bannerDescription: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.85)',
-    lineHeight: 20,
-    marginRight: 20,
-  },
-  bannerIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backdropFilter: 'blur(10px)',
-  },
-  bannerButton: {
-    marginTop: 12,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  bannerButtonText: {
-    color: COLORS.white,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  quickActionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    justifyContent: 'space-between',
-  },
-  actionCardSmall: {
-    width: '48%',
-    padding: 12,
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    alignItems: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 1,
-      },
-    }),
-  },
-  actionIconSmall: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-  },
-  actionCardText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    textAlign: 'center',
-  },
-  section: {
-    paddingHorizontal: 20,
-    marginBottom: 24,
-  },
+
+  // Section headers
   sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, marginBottom: 14,
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 12,
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sectionDot:      { width: 6, height: 6, borderRadius: 3 },
+  sectionTitle:    { fontSize: 17, fontWeight: '800', color: COLORS.textPrimary },
+  viewAllText:     { fontSize: 13, fontWeight: '700', color: COLORS.primary },
+
+  // Skills chips
+  skillsChipRow: { flexDirection: 'row', gap: 6 },
+  skillChip: {
+    backgroundColor: `${COLORS.primary}12`, paddingHorizontal: 9, paddingVertical: 4,
+    borderRadius: 20, borderWidth: 1, borderColor: `${COLORS.primary}25`,
   },
-  viewAllText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.primary,
-  },
+  skillChipText: { fontSize: 10, fontWeight: '700', color: COLORS.primary },
+
+  // Trend cards
+  trendScroll:       { paddingLeft: 20, paddingRight: 8, paddingBottom: 4 },
   trendCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 14,
-    padding: 16,
+    width: TREND_CARD_W, backgroundColor: COLORS.white, borderRadius: 16,
+    padding: 14, marginRight: 10, borderTopWidth: 3,
     ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      },
+      ios:     { shadowColor: '#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.06, shadowRadius:8 },
+      android: { elevation: 2 },
     }),
   },
-  trendHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+  trendCardSkeleton: { borderTopColor: COLORS.border, opacity: 0.4, height: 110 },
+  trendIconWrap: {
+    width: 34, height: 34, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
   },
-  trendTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
+  trendLabel:     { fontSize: 12, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 4 },
+  trendCount:     { fontSize: 20, fontWeight: '900', color: COLORS.textPrimary, letterSpacing: -0.5 },
+  trendBadge:     { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4 },
+  trendBadgeText: { fontSize: 10, fontWeight: '700' },
+
+  // Jobs loading/empty
+  jobsLoading: { alignItems: 'center', paddingVertical: 40, gap: 12 },
+  jobsLoadingText: { color: COLORS.textSecondary, fontSize: 14, fontWeight: '500' },
+  noJobs: { alignItems: 'center', paddingVertical: 36, paddingHorizontal: 32, gap: 8 },
+  noJobsText: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
+  noJobsSub:  { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center' },
+  noJobsBtn: {
+    marginTop: 8, backgroundColor: COLORS.primary,
+    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12,
   },
-  trendSubtitle: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-  },
-  trendBadge: {
-    backgroundColor: `${COLORS.success}20`,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  trendBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.success,
-  },
-  skillsList: {
-    gap: 12,
-  },
-  skillItem: {
-    gap: 6,
-  },
-  skillName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  skillBar: {
-    height: 6,
-    backgroundColor: COLORS.border,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  skillFill: {
-    height: '100%',
-    backgroundColor: COLORS.primary,
-    borderRadius: 3,
-  },
+  noJobsBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 13 },
+
+  // Job list
+  jobsList: { paddingHorizontal: 20, gap: 12 },
   jobCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 12,
+    backgroundColor: COLORS.white, borderRadius: 18, padding: 16,
+    borderWidth: 1, borderColor: COLORS.borderLight,
     ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      },
+      ios:     { shadowColor: '#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.07, shadowRadius:10 },
+      android: { elevation: 3 },
     }),
   },
-  jobCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
+  jobCardHeader:   { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
+  companyAvatar: {
+    width: 42, height: 42, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
   },
-  jobCardIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: `${COLORS.primary}15`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
+  companyAvatarText: { fontSize: 17, fontWeight: '800' },
+  jobCardTitles:   { flex: 1 },
+  jobTitle:        { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
+  jobCompany:      { fontSize: 12, color: COLORS.textSecondary, marginTop: 2, fontWeight: '500' },
+  jobPosted:       { fontSize: 10, color: COLORS.textTertiary, fontWeight: '500' },
+
+  jobMetaRow:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10, alignItems: 'center' },
+  jobMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  jobMetaText: { fontSize: 11, color: COLORS.textSecondary, fontWeight: '500' },
+  jobTypePill: {
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
   },
-  jobCardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 2,
+  jobTypePillText: { fontSize: 10, fontWeight: '700' },
+
+  jobDesc: { fontSize: 12, color: COLORS.textSecondary, lineHeight: 18, marginBottom: 12 },
+
+  jobCardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  jobCatChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: COLORS.backgroundSecondary,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
   },
-  jobCardCompany: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
+  jobCatChipText: { fontSize: 10, fontWeight: '600' },
+
+  // Black apply button (per user preference)
+  applyBtn:         { borderRadius: 10, overflow: 'hidden' },
+  applyBtnText: {
+    backgroundColor: COLORS.ink,
+    color: COLORS.white, fontWeight: '700', fontSize: 12,
+    paddingHorizontal: 14, paddingVertical: 8, overflow: 'hidden', borderRadius: 10,
   },
-  jobCardDetails: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+
+  // See more (black gradient)
+  seeMoreBtn:      { borderRadius: 14, overflow: 'hidden', marginTop: 4 },
+  seeMoreGradient: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 14, gap: 8,
   },
-  jobDetailTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: `${COLORS.primary}10`,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    gap: 4,
-  },
-  jobDetailText: {
-    fontSize: 11,
-    color: COLORS.primary,
-    fontWeight: '500',
-  },
-  applyButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  applyButtonText: {
-    color: COLORS.white,
-    fontWeight: '600',
-    fontSize: 14,
-  },
+  seeMoreText: { color: COLORS.white, fontWeight: '700', fontSize: 14 },
+
+  // Tips
+  tipsScroll: { paddingLeft: 20, paddingRight: 8, paddingBottom: 4 },
   tipCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.white,
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 10,
-    gap: 12,
+    width: W * 0.62, backgroundColor: COLORS.white, borderRadius: 18,
+    padding: 16, marginRight: 12,
+    borderWidth: 1, borderColor: COLORS.borderLight,
     ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.03,
-        shadowRadius: 2,
-      },
-      android: {
-        elevation: 1,
-      },
+      ios:     { shadowColor: '#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.06, shadowRadius:8 },
+      android: { elevation: 2 },
     }),
   },
-  tipIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tipTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: 2,
-  },
-  tipDescription: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    lineHeight: 16,
-  },
-  accessibilityCard: {
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  accessibilityContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  accessibilityTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.success,
-    marginBottom: 4,
-  },
-  accessibilityDescription: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
-    marginRight: 12,
-    flex: 1,
-  },
-  accessibilityButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    backgroundColor: COLORS.success,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  accessibilityButtonText: {
-    color: COLORS.white,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  quickActionsContainer: {
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  actionCard: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  actionIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  reportCountBadge: {
-  backgroundColor: COLORS.primary,
-  paddingHorizontal: 10,
-  paddingVertical: 4,
-  borderRadius: 12,
-  minWidth: 32,
-  alignItems: 'center',
-  },
-  reportCountText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.white,
-  },
-  emptyReportsContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 40,
-    backgroundColor: COLORS.white,
-    borderRadius: 16,
-  },
-  emptyReportsText: {
-    marginTop: 12,
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  emptyReportsSubtext: {
-    marginTop: 4,
-    fontSize: 13,
-    color: COLORS.textSecondary,
-  },
-  activityFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  categoryTag: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  categoryTagText: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  actionText: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-  section: {
-    paddingHorizontal: 20,
-    marginBottom: 24,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: COLORS.textSecondary,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    marginTop: 12,
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  emptySubtext: {
-    marginTop: 4,
-    fontSize: 13,
-    color: COLORS.textSecondary,
-  },
-  retryButton: {
-    marginTop: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-  },
-  retryButtonText: {
-    color: COLORS.white,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  carouselContent: {
-    paddingRight: 20,
-  },
-  newsCard: {
-    marginRight: 16,
-    borderRadius: 20,
-    overflow: 'hidden',
-  },
-  newsGradient: {
-    padding: 20,
-    minHeight: 280,
-    justifyContent: 'flex-end',
-  },
-  newsImageContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 140,
-  },
-  newsImage: {
-    width: '100%',
-    height: '100%',
-  },
-  newsImageOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 80,
-  },
-  newsContent: {
-    marginTop: 120,
-  },
-  newsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  categoryBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  categoryText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.white,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  newsTime: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontWeight: '500',
-  },
-  newsTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.white,
-    marginBottom: 6,
-    lineHeight: 26,
-  },
-  newsDescription: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  newsFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  sourceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: 12,
-  },
-  sourceText: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginLeft: 6,
-    fontWeight: '500',
-  },
-  readMoreButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    gap: 6,
-  },
-  readMoreText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.white,
-  },
-  pagination: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 16,
-    gap: 6,
-  },
-  paginationDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.border,
-  },
-  paginationDotActive: {
-    width: 20,
-    backgroundColor: COLORS.primary,
-  },
-  activityCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 16,
-    padding: 16,
-    borderLeftWidth: 3,
-    marginBottom: 10,
-    borderLeftColor: '#EF4444',
-    ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  activityHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  activityIconWrapper: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#EF444415',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  activityInfo: {
-    flex: 1,
-  },
-  activityTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 2,
-  },
-  activityLocation: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
-  },
-  activeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EF444415',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    gap: 4,
-  },
-  activeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#EF4444',
-  },
-  activeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#EF4444',
-    textTransform: 'uppercase',
-  },
-  activityDescription: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    lineHeight: 19,
-    marginBottom: 12,
-  },
-  viewMapButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: `${COLORS.primary}10`,
-    paddingVertical: 10,
-    borderRadius: 10,
-    gap: 6,
-  },
-  viewMapText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.primary,
-  },
-  resourceCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    ...Platform.select({
-      ios: {
-        shadowColor: COLORS.black,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.03,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 1,
-      },
-    }),
-  },
-  resourceIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: `${COLORS.primary}15`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  resourceContent: {
-    flex: 1,
-  },
-  resourceTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: 2,
-  },
-  resourceDescription: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-  },
+  tipIconWrap: {
+    width: 40, height: 40, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+  },
+  tipTitle: { fontSize: 14, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 6 },
+  tipText:  { fontSize: 12, color: COLORS.textSecondary, lineHeight: 18, fontWeight: '500' },
+
+  // Skills Modal
+  modalOverlay: {
+    flex: 1, justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.50)',
+  },
+  modalSheet: {
+    backgroundColor: COLORS.white, borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+  },
+  modalHandle: {
+    width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.border,
+    alignSelf: 'center', marginBottom: 20,
+  },
+  modalIconWrap:  { alignItems: 'center', marginBottom: 16 },
+  modalIcon: {
+    width: 52, height: 52, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  modalTitle:     { fontSize: 22, fontWeight: '800', color: COLORS.textPrimary, textAlign: 'center', marginBottom: 8 },
+  modalSub:       { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  modalInputRow:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  modalInputBadge: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: `${COLORS.primary}15`, alignItems: 'center', justifyContent: 'center',
+  },
+  modalInputBadgeText: { fontSize: 12, fontWeight: '800', color: COLORS.primary },
+  modalInput: {
+    flex: 1, height: 46, backgroundColor: COLORS.backgroundSecondary,
+    borderRadius: 12, paddingHorizontal: 14,
+    fontSize: 14, color: COLORS.textPrimary, fontWeight: '500',
+    borderWidth: 1.5, borderColor: COLORS.border,
+  },
+  modalSaveBtn:         { borderRadius: 14, overflow: 'hidden', marginTop: 8, marginBottom: 10 },
+  modalSaveBtnGradient: {
+    paddingVertical: 15, alignItems: 'center', justifyContent: 'center',
+  },
+  modalSaveBtnText: { color: COLORS.white, fontWeight: '800', fontSize: 15 },
+  modalSkipBtn:     { alignItems: 'center', paddingVertical: 8 },
+  modalSkipText:    { fontSize: 13, color: COLORS.textTertiary, fontWeight: '600' },
 });

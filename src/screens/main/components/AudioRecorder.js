@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   Animated,
 } from 'react-native';
-import { Audio } from 'expo-av';
+import * as Audio from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../../../constants/colors';
