@@ -49,13 +49,40 @@ function formatSalary(min, max) {
 }
 
 // ─── Helper: Time since posted ────────────────────────────────────────────────
+// Helper: Parse Adzuna date safely (always UTC)
+function parseAdzunaDate(dateStr) {
+  if (!dateStr) return null;
+  // If it already has Z or a timezone offset, parse directly
+  if (dateStr.includes('Z') || /[+-]\d{2}:?\d{2}$/.test(dateStr)) {
+    return new Date(dateStr);
+  }
+  // Otherwise, assume it's UTC and append 'Z'
+  return new Date(dateStr + 'Z');
+}
+
 function timeAgo(dateStr) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const days = Math.floor(diff / 86400000);
-  if (days === 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  if (days < 7)  return `${days} days ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  const date = parseAdzunaDate(dateStr);
+  if (!date || isNaN(date.getTime())) {
+    console.warn(`[timeAgo] Invalid date: ${dateStr}`);
+    return 'Recently';
+  }
+
+  const diff = Date.now() - date.getTime();
+
+  // If the date is in the future, treat as "just now"
+  if (diff < 0) return 'Just now';
+
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(diff / 60000);
+  const hours   = Math.floor(diff / 3600000);
+  const days    = Math.floor(diff / 86400000);
+
+  if (seconds < 60) return `${seconds}s ago`;
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24)   return `${hours}h ago`;
+  if (days === 1)   return '1 day ago';
+  if (days < 7)     return `${days} days ago`;
+  if (days < 30)    return `${Math.floor(days / 7)}w ago`;
   return `${Math.floor(days / 30)}mo ago`;
 }
 

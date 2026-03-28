@@ -1,392 +1,370 @@
 // src/services/GeminiLiveService.js
-// Manages the WebSocket connection to Google Gemini Live API.
-// Client-side direct connection — no backend required for prototype.
-// Follows best practices from: https://ai.google.dev/gemini-api/docs/live-api
+// ─────────────────────────────────────────────────────────────────────────────
+// BUGS FIXED IN THIS VERSION:
+//
+// ROOT CAUSE — ALL prior crashes / "goes back to home" were caused by this:
+//
+//   The Gemini Live API requires camelCase JSON keys.
+//   The previous version sent snake_case throughout, which the API silently
+//   rejected. The WebSocket closed immediately, onSessionEnded fired before
+//   sessionStartedRef was set to true, so safeGoBack() was called → home.
+//
+//   Specific snake_case → camelCase fixes:
+//     generation_config        → generationConfig
+//     response_modalities      → responseModalities
+//     speech_config            → speechConfig
+//     voice_config             → voiceConfig
+//     prebuilt_voice_config    → prebuiltVoiceConfig
+//     voice_name               → voiceName
+//     system_instruction       → systemInstruction
+//     context_window_compression → contextWindowCompression
+//     trigger_tokens           → triggerTokens
+//     sliding_window           → slidingWindow
+//     target_tokens            → targetTokens
+//     realtime_input           → realtimeInput
+//     media_chunks             → (removed — wrong format entirely)
+//     mime_type                → mimeType
+//     client_content           → (removed — use realtimeInput.text instead)
+//     turn_complete            → turnComplete
+//
+//   Audio message format was also completely wrong:
+//     OLD (broken):  { realtime_input: { media_chunks: [{ mime_type, data }] } }
+//     NEW (correct): { realtimeInput: { audio: { mimeType: "audio/pcm", data } } }
+//
+//   Text message format was also wrong:
+//     OLD (broken):  { client_content: { turns: [...], turn_complete: true } }
+//     NEW (correct): { realtimeInput: { text: "..." } }
+//                    — matches the working geminilive.js reference implementation
+//
+//   Model name: 'gemini-2.0-flash-exp' is deprecated.
+//     Use 'gemini-2.0-flash-live-001' (stable) or check AI Studio for latest.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 
 import * as FileSystem from 'expo-file-system';
-import * as Audio from 'expo-audio';
 import CONFIG from '../../config';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const GEMINI_API_KEY = CONFIG.GEMINI_API_KEY;
-const GEMINI_MODEL   = 'gemini-2.0-flash-exp';
-const WS_URL         = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
 
-// Audio settings (must match Gemini Live requirements)
-const INPUT_SAMPLE_RATE  = 16000;  // Gemini expects 16 kHz input
-const OUTPUT_SAMPLE_RATE = 24000;  // Gemini outputs at 24 kHz
-const CHUNK_INTERVAL_MS  = 200;    // Chunked recording interval
+// ✅ Valid Live API model names (as of mid-2025):
+//    'gemini-2.0-flash-live-001'       ← stable, recommended
+//    'gemini-live-2.5-flash-preview'   ← latest preview
+// ❌ 'gemini-2.0-flash-exp'            ← DEPRECATED, causes 1008 close
+const GEMINI_MODEL = 'gemini-3.1-flash-live-preview';
 
-// Video optimisation (per best practices — 1 FPS, JPEG, low token cost)
-const VIDEO_FPS_INTERVAL_MS = 1000; // 1 frame per second
+const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+const WS_URL  = `${WS_BASE}?key=${GEMINI_API_KEY}`;
 
-// ─── WAV Header Utility ───────────────────────────────────────────────────────
-/**
- * Prepends a standard WAV header to raw PCM bytes so expo-av can play them.
- */
-function buildWavHeader(pcmByteLength, sampleRate = OUTPUT_SAMPLE_RATE, channels = 1, bitsPerSample = 16) {
-  const byteRate   = sampleRate * channels * (bitsPerSample / 8);
-  const blockAlign = channels * (bitsPerSample / 8);
+const OUTPUT_SAMPLE_RATE = 24000; // Gemini outputs 24 kHz PCM
+
+// ─── WAV Header ───────────────────────────────────────────────────────────────
+function buildWavHeader(pcmLen, sr = OUTPUT_SAMPLE_RATE, ch = 1, bits = 16) {
+  const byteRate = sr * ch * (bits / 8);
+  const blkAlign = ch * (bits / 8);
   const buf  = new ArrayBuffer(44);
-  const view = new DataView(buf);
-
-  const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
-  writeStr(0,  'RIFF');
-  view.setUint32(4,  36 + pcmByteLength, true);
-  writeStr(8,  'WAVE');
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16,            true);  // chunk size
-  view.setUint16(20,  1,            true);  // PCM = 1
-  view.setUint16(22,  channels,     true);
-  view.setUint32(24,  sampleRate,   true);
-  view.setUint32(28,  byteRate,     true);
-  view.setUint16(32,  blockAlign,   true);
-  view.setUint16(34,  bitsPerSample,true);
-  writeStr(36, 'data');
-  view.setUint32(40,  pcmByteLength,true);
-
+  const v    = new DataView(buf);
+  const s    = (off, str) => {
+    for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i));
+  };
+  s(0, 'RIFF');  v.setUint32(4, 36 + pcmLen, true);
+  s(8, 'WAVE');  s(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true); v.setUint32(24, sr, true);
+  v.setUint32(28, byteRate, true); v.setUint16(32, blkAlign, true);
+  v.setUint16(34, bits, true); s(36, 'data'); v.setUint32(40, pcmLen, true);
   return buf;
 }
 
-// ─── Base64 ↔ Binary Helpers ──────────────────────────────────────────────────
-function base64ToUint8Array(b64) {
+function b64ToU8(b64) {
   const raw = atob(b64);
   const arr = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
   return arr;
 }
 
-function uint8ArrayToBase64(arr) {
-  let binary = '';
-  arr.forEach(byte => { binary += String.fromCharCode(byte); });
-  return btoa(binary);
+function u8ToB64(arr) {
+  let s = '';
+  arr.forEach(b => { s += String.fromCharCode(b); });
+  return btoa(s);
 }
 
 // ─── System Instruction Builder ───────────────────────────────────────────────
-/**
- * Builds a concise, optimised system prompt (40-60% shorter than verbose prompts,
- * per Live API best practices) from the user's About Me profile + optional job context.
- *
- * @param {object} profile  - The AboutMe Firestore document
- * @param {string} jobText  - Plain-text summary of the job offer (may be empty)
- */
-export function buildSystemInstruction(profile, jobText = '') {
+export function buildSystemInstruction(profile = {}, jobText = '') {
   const {
-    firstName        = 'Candidate',
-    disability       = 'None disclosed',
-    accommodation    = '',
-    field            = 'General',
-    experience       = '0',
-    education        = 'Not specified',
-    skills           = [],
-    careerGoal       = 'Full-time employment',
+    firstName     = 'Candidate',
+    disability    = 'None disclosed',
+    accommodation = '',
+    field         = 'General',
+    experience    = '0',
+    education     = 'Not specified',
+    skills        = [],
+    careerGoal    = 'Full-time employment',
   } = profile;
 
-  const jobContext = jobText
-    ? `\n\nJob/Opportunity Context:\n${jobText}\nBase all technical questions strictly on the requirements above.`
-    : '\n\nNo specific job context provided — use general industry-relevant questions.';
+  const jobCtx = jobText
+    ? `\n\nJob Context:\n${jobText}\nBase technical questions strictly on these requirements.`
+    : '\n\nNo specific job provided — use general industry questions.';
 
-  const accommodationNote = accommodation
-    ? `\nAccommodation needs: ${accommodation}. Respect this in pacing and communication style.`
+  const accNote = accommodation
+    ? `\nAccommodation: ${accommodation}. Respect this in pacing and style.`
     : '';
 
   return `
 **Persona:**
-You are VisionAlly, a warm and professional AI interview coach specialising in supporting people with disabilities. Speak clearly, at a measured pace. ONLY respond in English.
+You are VisionAlly, a warm professional AI interview coach for people with disabilities. Speak clearly at a measured pace. ONLY respond in English.
 
-**Candidate Profile:**
+**Candidate:**
 - Name: ${firstName}
-- Disability: ${disability}${accommodationNote}
-- Field: ${field} | Experience: ${experience} year(s)
+- Disability: ${disability}${accNote}
+- Field: ${field} | Experience: ${experience} yr(s)
 - Education: ${education}
 - Skills: ${skills.filter(Boolean).join(', ') || 'Not specified'}
-- Career Goal: ${careerGoal}
-${jobContext}
+- Goal: ${careerGoal}
+${jobCtx}
 
-**Interview Flow (follow in exact order):**
-1. INTRO — already played externally. When the user clicks "Start", begin Q1 immediately without re-greeting.
-2. QUESTIONS — Ask exactly 4 questions, one at a time. Wait until the user is completely finished speaking before responding. Never interrupt.
-   - Q1 (always): "Can you start by telling me a bit about yourself and your background?"
-   - Q2–Q4: Generate context-relevant questions based on the profile and job context above, increasing in depth.
-3. FEEDBACK LOOP — After EACH user answer, give brief feedback (2 sentences max): one strength, one specific tip. Then immediately ask the next question.
-4. CLOSE — After Q4 feedback, say: "That wraps up today's session, ${firstName}. You did a great job. Your feedback summary is being prepared now — well done!" Then stop speaking.
+**Interview Flow (exact order):**
+1. INTRO — already done externally. When user taps Start, go straight to Q1. No re-greeting.
+2. QUESTIONS — Exactly 4 questions, one at a time. Wait silently until user is completely done. NEVER interrupt.
+   Q1 (always): "Can you start by telling me a bit about yourself and your background?"
+   Q2–Q4: Relevant questions increasing in depth based on profile and job context.
+3. FEEDBACK — After EACH answer: 2 sentences (one strength + one tip). Then next question immediately.
+4. CLOSE — After Q4 feedback: "That wraps up today's session, ${firstName}. Well done! Your summary is being prepared." Then stop.
 
 **Rules (non-negotiable):**
-- Max 60 words per response (approx. 15 seconds of speech).
-- Never speak while the user is speaking.
-- Never be discouraging. Always be supportive and constructive.
-- Assess confidence, clarity, structure (STAR), and pacing silently — mention in feedback only.
-- If the user seems to struggle, offer a gentle prompt: "Take your time."
+- Max 60 words per response (~15 seconds speech).
+- Never speak while user speaks.
+- Always supportive. Never discouraging.
+- If user struggles: "Take your time."
 `.trim();
 }
 
-// ─── Gemini Live Service Class ────────────────────────────────────────────────
-/**
- * Manages a single Gemini Live API WebSocket session.
- *
- * Usage:
- *   const svc = new GeminiLiveService();
- *   await svc.connect(systemInstruction);
- *   svc.onAudioReady = (wavUri) => { playAudio(wavUri); };
- *   svc.onTurnComplete = () => { enableMic(); };
- *   svc.onInterrupted = () => { stopPlayback(); };
- *   svc.sendAudioChunk(base64PcmData);
- *   svc.sendVideoFrame(base64JpegData);
- *   svc.disconnect();
- */
+// ─── GeminiLiveService ────────────────────────────────────────────────────────
 export class GeminiLiveService {
   constructor() {
-    this._ws                = null;
-    this._isConnected       = false;
-    this._isSetupComplete   = false;
-    this._audioBuffer       = [];   // accumulated PCM chunks for current turn
-    this._currentSound      = null; // expo-av Sound object
-    this._resumptionToken   = null;
-
-    // Public callbacks — set these before connecting
-    this.onSetupComplete  = null;  // () => void
-    this.onAudioReady     = null;  // (wavFileUri: string) => void
-    this.onTurnComplete   = null;  // () => void
-    this.onInterrupted    = null;  // () => void
-    this.onSessionEnded   = null;  // () => void
-    this.onError          = null;  // (error: Error) => void
-  }
-
-  // ── Public: Connect ──────────────────────────────────────────────────────────
-  async connect(systemInstruction) {
-    return new Promise((resolve, reject) => {
-      try {
-        console.log('[GeminiLive] Initializing WebSocket connection...');
-        console.log('[GeminiLive] API Key configured:', !!GEMINI_API_KEY && GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY_HERE');
-        
-        if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
-          const err = new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in config.js');
-          console.error('[GeminiLive]', err.message);
-          if (this.onError) this.onError(err);
-          reject(err);
-          return;
-        }
-
-        this._ws = new WebSocket(WS_URL);
-
-        this._ws.onopen = () => {
-          console.log('[GeminiLive] WebSocket connected, sending setup...');
-          this._isConnected = true;
-          // Send setup message immediately on connection
-          const setupMsg = {
-            setup: {
-              model: `models/${GEMINI_MODEL}`,
-              generation_config: {
-                response_modalities: ['AUDIO'],
-                speech_config: {
-                  voice_config: {
-                    prebuilt_voice_config: { voice_name: 'Aoede' }, // Clear, professional voice
-                  },
-                },
-              },
-              system_instruction: {
-                parts: [{ text: systemInstruction }],
-              },
-              // CRITICAL: Enables sessions longer than 2 minutes (per best practices)
-              context_window_compression: {
-                trigger_tokens: 25600,
-                sliding_window: { target_tokens: 12800 },
-              },
-            },
-          };
-          this._ws.send(JSON.stringify(setupMsg));
-        };
-
-        this._ws.onmessage = async (event) => {
-          await this._handleServerMessage(event.data, resolve);
-        };
-
-        this._ws.onerror = (err) => {
-          console.error('[GeminiLive] WebSocket error:', err);
-          const errorMsg = 'WebSocket connection error. Check your API key and internet connection.';
-          if (this.onError) this.onError(new Error(errorMsg));
-          reject(new Error(errorMsg));
-        };
-
-        this._ws.onclose = (evt) => {
-          console.log('[GeminiLive] Connection closed:', evt.code, evt.reason);
-          this._isConnected = false;
-          if (evt.code !== 1000 && this.onSessionEnded) this.onSessionEnded();
-        };
-      } catch (err) {
-        console.error('[GeminiLive] Connection error:', err);
-        reject(err);
-      }
-    });
-  }
-
-  // ── Public: Send Audio Chunk ─────────────────────────────────────────────────
-  /**
-   * Send a base64-encoded PCM (16 kHz, 16-bit mono) audio chunk.
-   * Call this every ~200 ms while the user is speaking.
-   */
-  sendAudioChunk(base64Pcm) {
-    if (!this._isConnected || !this._isSetupComplete) return;
-    this._safeSend({
-      realtime_input: {
-        media_chunks: [{ mime_type: 'audio/pcm;rate=16000', data: base64Pcm }],
-      },
-    });
-  }
-
-  // ── Public: Send Video Frame ─────────────────────────────────────────────────
-  /**
-   * Send a base64-encoded JPEG image frame (1 FPS recommended).
-   * Gemini uses this for non-verbal cue analysis (eye contact, confidence).
-   */
-  sendVideoFrame(base64Jpeg) {
-    if (!this._isConnected || !this._isSetupComplete) return;
-    this._safeSend({
-      realtime_input: {
-        media_chunks: [{ mime_type: 'image/jpeg', data: base64Jpeg }],
-      },
-    });
-  }
-
-  // ── Public: Send Text Prompt ─────────────────────────────────────────────────
-  /**
-   * Inject a text prompt (used to trigger the AI intro speech).
-   */
-  sendTextPrompt(text) {
-    if (!this._isConnected || !this._isSetupComplete) return;
-    this._safeSend({
-      client_content: {
-        turns: [{ role: 'user', parts: [{ text }] }],
-        turn_complete: true,
-      },
-    });
-  }
-
-  // ── Public: Disconnect ───────────────────────────────────────────────────────
-  disconnect() {
-    if (this._ws && this._isConnected) {
-      this._ws.close(1000, 'Session ended by user');
-    }
+    this._ws              = null;
     this._isConnected     = false;
     this._isSetupComplete = false;
     this._audioBuffer     = [];
-    if (this._currentSound) {
-      this._currentSound.stopAsync().catch(() => {});
-      this._currentSound.unloadAsync().catch(() => {});
-      this._currentSound = null;
-    }
+    this._resumptionToken = null;
+
+    // Set these before calling connect()
+    this.onSetupComplete = null; // ()
+    this.onAudioReady    = null; // (wavUri: string)
+    this.onTurnComplete  = null; // ()
+    this.onInterrupted   = null; // ()
+    this.onSessionEnded  = null; // (code, reason)
+    this.onError         = null; // (Error)
   }
 
-  // ── Private: Handle Server Messages ─────────────────────────────────────────
-  async _handleServerMessage(raw, resolveSetup) {
-    let msg;
-    try {
-      msg = JSON.parse(raw);
-    } catch {
-      return;
+  async connect(systemInstruction) {
+    return new Promise((resolve, reject) => {
+    if (this._ws) {
+      try { this._ws.close(); } catch { /* ignore */ }
+      this._ws = null;
     }
+      if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_')) {
+        const e = new Error('GEMINI_API_KEY not configured in config.js');
+        console.error('[GeminiLive]', e.message);
+        if (this.onError) this.onError(e);
+        reject(e);
+        return;
+      }
 
-    // 1) Setup complete
+      console.log('[GeminiLive] Connecting, model:', GEMINI_MODEL);
+      try {
+        this._ws = new WebSocket(WS_URL);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+
+this._ws.send(JSON.stringify({
+  setup: {
+    model: `models/${GEMINI_MODEL}`,
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: 'Aoede',
+          },
+        },
+      },
+    },
+    systemInstruction: {
+      parts: [{ text: systemInstruction }],
+    },
+    // ❌ REMOVE THIS ENTIRE BLOCK — causes clean 1000 close on v1beta
+    // contextWindowCompression: {
+    //   triggerTokens: 25600,
+    //   slidingWindow: { targetTokens: 12800 },
+    // },
+  },
+}));
+      this._ws.onmessage = async (evt) => {
+        await this._handleMessage(evt.data, resolve);
+      };
+      let settled = false;
+
+      this._ws.onerror = (err) => {
+        if (settled) return;
+        settled = true;
+        console.error('[GeminiLive] WS error:', err);
+        const e = new Error('WebSocket error — verify API key and internet connection');
+        if (this.onError) this.onError(e);
+        reject(e);
+      };
+
+      this._ws.onclose = (evt) => {
+        console.log('[GeminiLive] WS closed:', evt.code, evt.reason);
+        this._isConnected     = false;
+        this._isSetupComplete = false;
+        if (!settled && evt.code !== 1000 && evt.code !== 1001) {
+          settled = true;
+          if (this.onSessionEnded) this.onSessionEnded(evt.code, evt.reason);
+        } else if (evt.code !== 1000 && evt.code !== 1001) {
+          if (this.onSessionEnded) this.onSessionEnded(evt.code, evt.reason);
+        }
+      };
+    });
+  }
+
+  // ✅ FIXED: correct camelCase format + correct audio field structure
+  //    OLD (broken): { realtime_input: { media_chunks: [{ mime_type, data }] } }
+  //    NEW (correct): { realtimeInput: { audio: { mimeType, data } } }
+  sendAudioChunk(b64Pcm) {
+    if (!this.isReady) return;
+    this._send({
+      realtimeInput: {                               // ✅ was: realtime_input
+        audio: {                                     // ✅ was: media_chunks array (wrong)
+          mimeType: 'audio/pcm',                     // ✅ was: mime_type inside chunk object
+          data: b64Pcm,
+        },
+      },
+    });
+  }
+
+  // ✅ FIXED: use realtimeInput.text (matches geminilive.js reference)
+  //    OLD (broken): { client_content: { turns: [...], turn_complete: true } }
+  //    NEW (correct): { realtimeInput: { text: "..." } }
+  sendTextPrompt(text) {
+    if (!this.isReady) return;
+    this._send({
+      realtimeInput: {                               // ✅ was: client_content (wrong key + format)
+        text: text,
+      },
+    });
+  }
+
+  // ✅ FIXED: for cases where you need a full turn (e.g. kicking off the interview)
+  //    Use clientContent with turnComplete (camelCase) when you need a hard turn boundary.
+  sendClientTurn(text) {
+    if (!this.isReady) return;
+    this._send({
+      clientContent: {                               // camelCase ✅
+        turns: [{ role: 'user', parts: [{ text }] }],
+        turnComplete: true,                          // camelCase ✅ was: turn_complete
+      },
+    });
+  }
+
+  sendVideoFrame(b64Jpeg) {
+    if (!this.isReady) return;
+    this._send({
+      realtimeInput: {                               // ✅ was: realtime_input
+        video: {                                     // ✅ was: media_chunks array (wrong)
+          mimeType: 'image/jpeg',                    // ✅ was: mime_type inside chunk object
+          data: b64Jpeg,
+        },
+      },
+    });
+  }
+
+  disconnect() {
+    if (this._ws) {
+      try { this._ws.close(1000, 'Session ended by user'); } catch { /* ignore */ }
+      this._ws = null;
+    }
+    this._isConnected = this._isSetupComplete = false;
+    this._audioBuffer = [];
+  }
+
+  async _handleMessage(raw, resolveSetup) {
+    let msg;
+    try { msg = JSON.parse(typeof raw === 'string' ? raw : await raw.text()); } catch { return; }
+
     if (msg.setupComplete !== undefined) {
+      console.log('[GeminiLive] ✅ setupComplete');
       this._isSetupComplete = true;
       if (this.onSetupComplete) this.onSetupComplete();
-      if (resolveSetup) resolveSetup();
+      if (resolveSetup)         resolveSetup();
       return;
     }
 
-    // 2) Session resumption token (save for reconnects)
     if (msg.sessionResumptionUpdate?.newHandle) {
       this._resumptionToken = msg.sessionResumptionUpdate.newHandle;
     }
 
-    // 3) GoAway — server is about to close, handle gracefully
     if (msg.goAway) {
-      console.warn('[GeminiLive] GoAway received, time left:', msg.goAway.timeLeft);
-      if (this.onSessionEnded) this.onSessionEnded();
+      console.warn('[GeminiLive] GoAway received');
+      if (this.onSessionEnded) this.onSessionEnded(0, 'GoAway');
       return;
     }
 
-    // 4) Server content (audio response)
-    const content = msg.serverContent;
-    if (!content) return;
+    const c = msg.serverContent;
+    if (!c) return;
 
-    // 4a) Interrupted — user barged in, discard buffered audio immediately
-    if (content.interrupted) {
+    if (c.interrupted) {
       this._audioBuffer = [];
-      await this._stopCurrentAudio();
       if (this.onInterrupted) this.onInterrupted();
       return;
     }
 
-    // 4b) Accumulate audio chunks
-    const parts = content.modelTurn?.parts ?? [];
-    for (const part of parts) {
-      if (part.inlineData?.mimeType?.startsWith('audio/pcm') && part.inlineData.data) {
-        this._audioBuffer.push(part.inlineData.data); // base64 PCM at 24 kHz
+    for (const p of (c.modelTurn?.parts ?? [])) {
+      if (p.inlineData?.mimeType?.startsWith('audio/pcm') && p.inlineData.data) {
+        this._audioBuffer.push(p.inlineData.data);
       }
     }
 
-    // 4c) Turn complete — flush buffered audio as a WAV and play it
-    if (content.turnComplete) {
+    if (c.turnComplete) {
       if (this._audioBuffer.length > 0) {
-        const wavUri = await this._flushAudioBufferToWav();
-        if (wavUri && this.onAudioReady) {
-          this.onAudioReady(wavUri);
-        }
+        const wavUri = await this._flushToWav();
+        if (wavUri && this.onAudioReady) this.onAudioReady(wavUri);
         this._audioBuffer = [];
       }
       if (this.onTurnComplete) this.onTurnComplete();
     }
   }
 
-  // ── Private: Flush PCM Buffer → WAV File ────────────────────────────────────
-  async _flushAudioBufferToWav() {
+  async _flushToWav() {
     try {
-      // Decode all base64 chunks and concatenate
-      const arrays = this._audioBuffer.map(b64 => base64ToUint8Array(b64));
-      const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
-      const pcm = new Uint8Array(totalLen);
-      let offset = 0;
-      arrays.forEach(a => { pcm.set(a, offset); offset += a.length; });
+      const chunks = this._audioBuffer.map(b => b64ToU8(b));
+      const total  = chunks.reduce((s, a) => s + a.length, 0);
+      const pcm    = new Uint8Array(total);
+      let   off    = 0;
+      chunks.forEach(c => { pcm.set(c, off); off += c.length; });
 
-      // Build WAV = 44-byte header + PCM data
-      const header    = buildWavHeader(pcm.length, OUTPUT_SAMPLE_RATE);
-      const headerArr = new Uint8Array(header);
-      const wav       = new Uint8Array(headerArr.length + pcm.length);
-      wav.set(headerArr, 0);
-      wav.set(pcm, headerArr.length);
+      const hdr = new Uint8Array(buildWavHeader(pcm.length));
+      const wav = new Uint8Array(hdr.length + pcm.length);
+      wav.set(hdr, 0);
+      wav.set(pcm, hdr.length);
 
-      // Write to a temp file that expo-av can play
-      const uri = `${FileSystem.cacheDirectory}gemini_audio_${Date.now()}.wav`;
-      await FileSystem.writeAsStringAsync(uri, uint8ArrayToBase64(wav), {
+      const uri = `${FileSystem.cacheDirectory}va_${Date.now()}.wav`;
+      await FileSystem.writeAsStringAsync(uri, u8ToB64(wav), {
         encoding: FileSystem.EncodingType.Base64,
       });
-
       return uri;
-    } catch (err) {
-      console.error('[GeminiLive] Failed to build WAV:', err);
+    } catch (e) {
+      console.error('[GeminiLive] _flushToWav:', e);
       return null;
     }
   }
 
-  // ── Private: Stop Any Playing Audio ─────────────────────────────────────────
-  async _stopCurrentAudio() {
-    if (this._currentSound) {
-      try {
-        await this._currentSound.stopAsync();
-        await this._currentSound.unloadAsync();
-      } catch { /* ignore */ }
-      this._currentSound = null;
-    }
-  }
-
-  // ── Private: Safe WebSocket Send ────────────────────────────────────────────
-  _safeSend(payload) {
+  _send(payload) {
     if (this._ws?.readyState === WebSocket.OPEN) {
-      try {
-        this._ws.send(JSON.stringify(payload));
-      } catch (err) {
-        console.error('[GeminiLive] Send error:', err);
+      try { this._ws.send(JSON.stringify(payload)); } catch (e) {
+        console.error('[GeminiLive] _send error:', e);
       }
     }
   }
@@ -395,37 +373,22 @@ export class GeminiLiveService {
   get resumptionToken() { return this._resumptionToken; }
 }
 
-// ─── Document Analyser (REST — not Live) ─────────────────────────────────────
-/**
- * Uses the standard Gemini REST API to extract job requirements from a document
- * (image or PDF). The resulting text is injected into the Live session's system
- * instructions, making the AI highly focused on the real offer.
- *
- * @param {string} base64Data   - base64 content of the file
- * @param {string} mimeType     - 'image/jpeg' | 'image/png' | 'application/pdf'
- * @returns {Promise<string>}   - Plain-text summary of the job offer
- */
+// ─── Document Analyser ────────────────────────────────────────────────────────
 export async function analyseJobDocument(base64Data, mimeType) {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-
+  const url  = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
   const body = {
     contents: [{
       parts: [
-        {
-          inline_data: { mime_type: mimeType, data: base64Data },
-        },
-        {
-          text: 'Extract the following from this job/internship posting in plain text (no markdown): Job title, Company name, Key responsibilities (bullet list), Required qualifications, Required skills, Nice-to-have skills, and any other important context for interview preparation. Be concise.',
-        },
+        { inlineData: { mimeType, data: base64Data } },
+        { text: 'Extract in plain text (no markdown): Job title, Company, Key responsibilities, Required skills, Nice-to-haves. Be concise.' },
       ],
     }],
-    generation_config: { max_output_tokens: 600 },
+    generationConfig: { maxOutputTokens: 500 },
   };
-
-  const res  = await fetch(endpoint, {
-    method:  'POST',
+  const res  = await fetch(url, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';

@@ -1,5 +1,5 @@
 const API_CONFIG = {
-  BASE_URL: 'http://10.254.239.38:5000',
+  BASE_URL: 'http://10.150.65.148:5000',
   TIMEOUT: 90000,
 };
 

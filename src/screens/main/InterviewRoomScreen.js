@@ -1,63 +1,71 @@
 // src/screens/main/InterviewRoomScreen.js
-// The live interview room. Full-screen camera + Gemini Live API bidirectional audio.
-// Token-optimisation strategies applied throughout (1 FPS JPEG, 16 kHz PCM chunks,
-// context window compression, concise system instructions).
+// ─────────────────────────────────────────────────────────────────────────────
+// BUGS FIXED IN THIS VERSION:
+//
+// BUG 1 — Wrong Audio import:
+//   OLD: import * as Audio from 'expo-audio'   ← BREAKS everything
+//   FIX: import { Audio } from 'expo-av'       ← CORRECT for SDK 53
+//
+// BUG 2 — Stale closure in Gemini callbacks:
+//   The callbacks (onTurnComplete, onInterrupted, etc.) were assigned once
+//   in useEffect and captured the initial roomState = 'loading'. Because
+//   roomState is React state, the callback always saw 'loading', so state
+//   transitions to READY / USER_SPEAKING NEVER happened.
+//   FIX: roomStateRef mirrors roomState. Callbacks always read the ref.
+//
+// BUG 3 — navigation.replace('Main') on EVERY WS close:
+//   Any WebSocket error (including during setup) fired onSessionEnded →
+//   handleSessionEnd → navigation.replace('Main') → back to home tab.
+//   FIX: Only call handleSessionEnd if interview actually started (sessionStarted ref).
+//        Use navigation.goBack() instead of replace().
+//
+// BUG 4 — handleSessionEnd captured in stale closure:
+//   onSessionEnded callback captured handleSessionEnd at mount time.
+//   FIX: handleSessionEndRef always points to the latest function.
+//
+// BUG 5 — cleanup() called useCallback functions that may be stale:
+//   FIX: cleanup uses refs directly.
+// ─────────────────────────────────────────────────────────────────────────────
 
-import React, {
-  useState, useRef, useEffect, useCallback,
-} from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated,
   Platform, StatusBar, Alert, ActivityIndicator, Dimensions,
 } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
-import * as Audio        from 'expo-audio';
+import { Audio }         from 'expo-av';           
 import * as FileSystem   from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons }      from '@expo/vector-icons';
-import {
-  GeminiLiveService,
-  buildSystemInstruction,
-} from '../../services/GeminiLiveService';
+import { GeminiLiveService, buildSystemInstruction } from '../../services/GeminiLiveService';
 import { InterviewStorageService } from '../../services/InterviewStorageService';
 
-const { width: W, height: H } = Dimensions.get('window');
+const { height: H } = Dimensions.get('window');
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
 const C = {
-  primary:     '#8B5CF6',
-  primaryDark: '#7C3AED',
-  white:       '#FFFFFF',
-  black:       '#000000',
-  error:       '#EF4444',
-  warning:     '#F59E0B',
-  success:     '#10B981',
-  glass:       'rgba(255,255,255,0.12)',
-  glassDark:   'rgba(0,0,0,0.45)',
-  liveRed:     '#EF4444',
+  primary:  '#8B5CF6', primaryDark: '#7C3AED',
+  white: '#FFFFFF', black: '#000000',
+  error: '#EF4444', success: '#10B981',
+  glass: 'rgba(255,255,255,0.12)',
 };
 
-// ─── Interview State Machine ──────────────────────────────────────────────────
 const STATE = {
-  LOADING:       'loading',      // Connecting + analysing documents
-  READY:         'ready',        // AI intro playing, waiting for user Start tap
-  INTERVIEWING:  'interviewing', // Active question-answer loop
-  AI_SPEAKING:   'ai_speaking',  // AI is playing audio
-  USER_SPEAKING: 'user_speaking',// Mic is open
-  ENDED:         'ended',        // All 4 questions done, session saved
+  LOADING:       'loading',
+  READY:         'ready',
+  AI_SPEAKING:   'ai_speaking',
+  USER_SPEAKING: 'user_speaking',
+  ENDED:         'ended',
 };
 
-// ─── Pulse Animation Helper ───────────────────────────────────────────────────
+// ─── Pulse animation ──────────────────────────────────────────────────────────
 function usePulse(active) {
   const anim = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (active) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(anim, { toValue: 1.18, duration: 700, useNativeDriver: true }),
-          Animated.timing(anim, { toValue: 1,    duration: 700, useNativeDriver: true }),
-        ])
-      ).start();
+      Animated.loop(Animated.sequence([
+        Animated.timing(anim, { toValue: 1.18, duration: 700, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 1,    duration: 700, useNativeDriver: true }),
+      ])).start();
     } else {
       anim.stopAnimation();
       anim.setValue(1);
@@ -68,469 +76,410 @@ function usePulse(active) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function InterviewRoomScreen({ navigation, route }) {
-  const { profile, jobText, jobRole, jobCompany } = route.params ?? {};
+  const { profile = {}, jobText = '', jobRole = '', jobCompany = '' } = route.params ?? {};
 
-  // ── Permissions ──────────────────────────────────────────────────────────────
   const [cameraPermission, requestCamera] = useCameraPermissions();
   const [micPermission,    requestMic]    = useMicrophonePermissions();
 
-  // ── UI State ─────────────────────────────────────────────────────────────────
   const [roomState,     setRoomState]     = useState(STATE.LOADING);
   const [isMuted,       setIsMuted]       = useState(false);
   const [isCameraOff,   setIsCameraOff]   = useState(false);
   const [loadingMsg,    setLoadingMsg]    = useState('Connecting to AI…');
-  const [questionIndex, setQuestionIndex] = useState(0); // 0 = not started, 1-4 = active
+  const [questionIndex, setQuestionIndex] = useState(0);
   const [statusLabel,   setStatusLabel]   = useState('');
 
-  // ── Refs ─────────────────────────────────────────────────────────────────────
-  const cameraRef           = useRef(null);
-  const geminiSvc           = useRef(null);
-  const recordingRef        = useRef(null);
-  const playbackSoundRef    = useRef(null);
-  const chunkIntervalRef    = useRef(null);
-  const videoIntervalRef    = useRef(null);
-  const sessionStartRef     = useRef(null);
-  const transcriptRef       = useRef([]);  // QAExchange[]
-  const currentQRef         = useRef('');  // current question text
-  const currentAnswerRef    = useRef('');  // accumulated user answer text (for storage)
-  const currentFeedbackRef  = useRef('');  // accumulated AI feedback
-  const aiTurnBufferRef     = useRef('');  // AI text buffer for transcript
-  const isMutedRef          = useRef(false);
+  // ── Refs (prevent stale closures in Gemini callbacks) ────────────────────────
+  const roomStateRef         = useRef(STATE.LOADING); // mirrors roomState
+  const isMutedRef           = useRef(false);
+  const isCameraOffRef       = useRef(false);
+  const geminiRef            = useRef(null);          // GeminiLiveService instance
+  const recordingRef         = useRef(null);
+  const playbackRef          = useRef(null);
+  const chunkIntervalRef     = useRef(null);
+  const videoIntervalRef     = useRef(null);
+  const sessionStartRef      = useRef(null);
+  const sessionStartedRef    = useRef(false);         // BUG 3 fix: guard
+  const transcriptRef        = useRef([]);
+  const handleSessionEndRef  = useRef(null);          // BUG 4 fix: always-fresh ref
+  const cameraRef            = useRef(null);
+  const questionIndexRef     = useRef(0);
 
-  // Sync isMuted ref
-  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  // Sync refs to state
+  const setRoomStateSynced = useCallback((s) => {
+    roomStateRef.current = s;
+    setRoomState(s);
+  }, []);
 
-  // ── Animations ────────────────────────────────────────────────────────────────
-  const startPulse   = usePulse(roomState === STATE.READY);
-  const micPulse     = usePulse(roomState === STATE.USER_SPEAKING);
-  const fadeAnim     = useRef(new Animated.Value(0)).current;
+  useEffect(() => { isMutedRef.current    = isMuted;      }, [isMuted]);
+  useEffect(() => { isCameraOffRef.current = isCameraOff; }, [isCameraOff]);
+
+  const fadeAnim    = useRef(new Animated.Value(0)).current;
+  const startPulse  = usePulse(roomState === STATE.READY);
+  const micPulse    = usePulse(roomState === STATE.USER_SPEAKING);
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, []);
 
-  // ─── Safe Navigation Helper ───────────────────────────────────────────────────
+  // ─── Safe navigation ─────────────────────────────────────────────────────────
   const safeGoBack = useCallback(() => {
     try {
-      if (navigation.canGoBack()) {
-        navigation.goBack();
-      } else {
-        // Can't go back → navigate to Interviewer tab
-        navigation.navigate('Main', { screen: 'interviewer' });
-      }
-    } catch (err) {
-      try {
-        navigation.navigate('Main');
-      } catch (e) {
-        console.error('❌ [InterviewRoom] All navigation attempts failed:', e);
-      }
+      if (navigation.canGoBack()) navigation.goBack();
+      else navigation.navigate('Main');
+    } catch {
+      try { navigation.navigate('Main'); } catch { /* nothing */ }
     }
   }, [navigation]);
 
-  // ─── Initialise on mount ─────────────────────────────────────────────────────
-  useEffect(() => {
-    (async () => {
-      console.log('\n🚀 [InterviewRoom] Initializing interview room...');
-      
-      // 1. Request permissions
-      console.log('📹 [InterviewRoom] Requesting permissions...');
-      if (!cameraPermission?.granted) {
-        console.log('📹 [InterviewRoom] Requesting camera permission...');
-        await requestCamera();
-      }
-      if (!micPermission?.granted) {
-        console.log('🎤 [InterviewRoom] Requesting mic permission...');
-        await requestMic();
-      }
-      console.log('✅ [InterviewRoom] Permissions granted');
-
-      // 2. Configure expo-av audio session
-      console.log('🔊 [InterviewRoom] Configuring audio session...');
+  // ─── Audio playback ───────────────────────────────────────────────────────────
+  const stopPlayback = useCallback(async () => {
+    if (playbackRef.current) {
       try {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS:              true,
-          playsInSilentModeIOS:            true,
-          staysActiveInBackground:         false,
-          shouldDuckAndroid:               false,
-          playThroughEarpieceAndroid:      false,
-        });
-        console.log('✅ [InterviewRoom] Audio session configured');
-      } catch (audioErr) {
-        console.error('❌ [InterviewRoom] Audio config failed:', audioErr);
-        console.error('❌ [InterviewRoom] Audio error details:', audioErr.message);
-        Alert.alert('Audio Setup Failed', 'Could not configure audio. Please try again.');
-        safeGoBack();
-        return;
-      }
-
-      setLoadingMsg('Building your personalised session…');
-
-      // 3. Build system instruction from profile + job context
-      let sysInstruction;
-      try {
-        console.log('📝 [InterviewRoom] Building system instruction...');
-        sysInstruction = buildSystemInstruction(profile ?? {}, jobText ?? '');
-        console.log('✅ [InterviewRoom] System instruction built');
-      } catch (sysErr) {
-        console.error('❌ [InterviewRoom] System instruction build failed:', sysErr);
-        console.error('❌ [InterviewRoom] Error details:', sysErr.message);
-        Alert.alert('Setup Failed', 'Could not prepare your session. Please try again.');
-        safeGoBack();
-        return;
-      }
-
-      setLoadingMsg('Connecting to VisionAlly AI…');
-
-      // 4. Create and connect Gemini Live service
-      try {
-        console.log('🤖 [InterviewRoom] Creating GeminiLiveService...');
-        geminiSvc.current = new GeminiLiveService();
-        console.log('✅ [InterviewRoom] GeminiLiveService created');
-      } catch (svcErr) {
-        console.error('❌ [InterviewRoom] GeminiLiveService creation failed:', svcErr);
-        console.error('❌ [InterviewRoom] Error details:', svcErr.message);
-        Alert.alert('Service Error', 'Could not initialize AI service. Please try again.');
-        safeGoBack();
-        return;
-      }
-
-      geminiSvc.current.onSetupComplete = () => {
-        console.log('✅ [InterviewRoom] *** SETUP COMPLETE ***');
-        setLoadingMsg('Almost ready…');
-        // Trigger the AI intro speech
-        console.log('🎙️ [InterviewRoom] Sending AI intro prompt...');
-        geminiSvc.current.sendTextPrompt(
-          `Hello, please greet the user by their first name (${profile?.firstName ?? 'there'}) ` +
-          `and introduce yourself as VisionAlly in 2-3 warm sentences. ` +
-          `Tell them you will begin the mock interview when they tap Start. Keep it under 15 seconds.`
-        );
-      };
-
-      geminiSvc.current.onAudioReady = async (wavUri) => {
-        await playAudio(wavUri);
-      };
-
-      geminiSvc.current.onTurnComplete = () => {
-        console.log('✅ [InterviewRoom] Turn complete from AI');
-        // After AI finishes speaking in LOADING → transition to READY
-        if (roomState === STATE.LOADING) {
-          console.log('🎯 [InterviewRoom] Transitioning to READY state');
-          setRoomState(STATE.READY);
-          setStatusLabel('Tap "Start" to begin');
-        }
-        // During interview → enable mic for user response
-        if (roomState === STATE.AI_SPEAKING || roomState === STATE.INTERVIEWING) {
-          console.log('🎙️ [InterviewRoom] User turn - enabling microphone');
-          setRoomState(STATE.USER_SPEAKING);
-          setStatusLabel('Your turn — speak now');
-          if (!isMutedRef.current) startMicCapture();
-        }
-      };
-
-      geminiSvc.current.onInterrupted = () => {
-        console.log('⚡ [InterviewRoom] AI interrupted - user started speaking');
-        stopPlayback();
-        if (!isMutedRef.current) startMicCapture();
-        setRoomState(STATE.USER_SPEAKING);
-        setStatusLabel('Listening…');
-      };
-
-      geminiSvc.current.onSessionEnded = () => {
-        console.log('🏁 [InterviewRoom] Session ended from server');
-        handleSessionEnd(false);
-      };
-
-      geminiSvc.current.onError = (err) => {
-        console.error('❌ [InterviewRoom] Gemini error:', err);
-        Alert.alert('Connection Issue', 'Could not connect to the AI. Please check your internet and try again.');
-        safeGoBack();
-      };
-
-      try {
-        console.log('🔌 [InterviewRoom] Attempting to connect to Gemini Live...');
-        await geminiSvc.current.connect(sysInstruction);
-        console.log('✅ [InterviewRoom] Connected to Gemini Live!');
-        sessionStartRef.current = Date.now();
-      } catch (err) {
-        console.error('❌ [InterviewRoom] Connect failed:', err);
-        console.error('❌ [InterviewRoom] Error details:', err.message);
-        Alert.alert('Connection Failed', 'Could not reach the AI service. Please try again.');
-        safeGoBack();
-      }
-    })();
-
-    return () => cleanup();
+        await playbackRef.current.stopAsync();
+        await playbackRef.current.unloadAsync();
+      } catch { /* ignore */ }
+      playbackRef.current = null;
+    }
   }, []);
 
-  // ─── Audio Playback ──────────────────────────────────────────────────────────
   const playAudio = useCallback(async (wavUri) => {
     try {
       await stopPlayback();
-      setRoomState(STATE.AI_SPEAKING);
+      setRoomStateSynced(STATE.AI_SPEAKING);
       setStatusLabel('VisionAlly is speaking…');
 
+      // ✅ expo-av API
       const { sound } = await Audio.Sound.createAsync(
         { uri: wavUri },
         { shouldPlay: true, volume: 1.0 },
       );
-      playbackSoundRef.current = sound;
+      playbackRef.current = sound;
 
-      sound.setOnPlaybackStatusUpdate((status) => {
+      sound.setOnPlaybackStatusUpdate(status => {
         if (status.didJustFinish) {
           sound.unloadAsync().catch(() => {});
-          playbackSoundRef.current = null;
-          // Clean up temp WAV file
+          playbackRef.current = null;
           FileSystem.deleteAsync(wavUri, { idempotent: true }).catch(() => {});
         }
       });
     } catch (err) {
-      console.error('[InterviewRoom] playAudio error:', err);
+      console.error('[Room] playAudio:', err);
     }
-  }, []);
+  }, [stopPlayback, setRoomStateSynced]);
 
-  const stopPlayback = useCallback(async () => {
-    if (playbackSoundRef.current) {
-      try {
-        await playbackSoundRef.current.stopAsync();
-        await playbackSoundRef.current.unloadAsync();
-      } catch { /* ignore */ }
-      playbackSoundRef.current = null;
-    }
-  }, []);
-
-  // ─── Mic Capture (chunked recording) ─────────────────────────────────────────
-  /**
-   * Record in 200 ms segments, strip the WAV header (44 bytes),
-   * and send raw PCM to Gemini Live. Re-starts automatically for continuous streaming.
-   */
-  const startMicCapture = useCallback(async () => {
-    if (recordingRef.current) {
-      console.log('⚠️ [InterviewRoom] Mic already recording, ignoring start');
-      return; // already recording
-    }
-    try {
-      console.log('🎤 [InterviewRoom] Starting microphone capture...');
-      const rec = new Audio.Recording();
-      await rec.prepareToRecordAsync({
-        android: {
-          extension:       '.wav',
-          outputFormat:    Audio.AndroidOutputFormat.DEFAULT,
-          audioEncoder:    Audio.AndroidAudioEncoder.DEFAULT,
-          sampleRate:      16000,
-          numberOfChannels:1,
-          bitRate:         128000,
-        },
-        ios: {
-          extension:          '.wav',
-          outputFormat:       Audio.IOSOutputFormat.LINEARPCM,
-          audioQuality:       Audio.IOSAudioQuality.HIGH,
-          sampleRate:         16000,
-          numberOfChannels:   1,
-          bitRate:            256000,
-          linearPCMBitDepth:  16,
-          linearPCMIsBigEndian: false,
-          linearPCMIsFloat:   false,
-        },
-        web: {},
-      });
-      await rec.startAsync();
-      recordingRef.current = rec;
-
-      // Send chunks every 200 ms (per best practices: 20ms–100ms; 200ms is good for prototype)
-      chunkIntervalRef.current = setInterval(async () => {
-        if (!recordingRef.current || isMutedRef.current) return;
-        try {
-          // Stop → read → restart cycle for chunked streaming
-          await recordingRef.current.stopAndUnloadAsync();
-          const uri = recordingRef.current.getURI();
-          if (uri) {
-            const b64Full = await FileSystem.readAsStringAsync(uri, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-            // Strip 44-byte WAV header to get raw PCM, then re-encode
-            // WAV header = 44 bytes → in base64 ≈ ceil(44/3)*4 = 60 chars
-            // We slice raw bytes; decode → strip → re-encode
-            const raw     = atob(b64Full);
-            const pcmRaw  = raw.slice(44);  // remove WAV header bytes
-            const pcmB64  = btoa(pcmRaw);
-            geminiSvc.current?.sendAudioChunk(pcmB64);
-            // Clean up temp file
-            FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-          }
-          // Restart recording for next chunk
-          const newRec = new Audio.Recording();
-          await newRec.prepareToRecordAsync({
-            android: {
-              extension: '.wav', outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-              audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-              sampleRate: 16000, numberOfChannels: 1, bitRate: 128000,
-            },
-            ios: {
-              extension: '.wav', outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-              audioQuality: Audio.IOSAudioQuality.HIGH,
-              sampleRate: 16000, numberOfChannels: 1, bitRate: 256000,
-              linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false,
-            },
-            web: {},
-          });
-          await newRec.startAsync();
-          recordingRef.current = newRec;
-        } catch (err) {
-          console.warn('[InterviewRoom] chunk send error:', err);
-        }
-      }, 200);
-
-    } catch (err) {
-      console.error('[InterviewRoom] startMicCapture error:', err);
-    }
-  }, []);
-
+  // ─── Mic capture ─────────────────────────────────────────────────────────────
   const stopMicCapture = useCallback(async () => {
     clearInterval(chunkIntervalRef.current);
     chunkIntervalRef.current = null;
     if (recordingRef.current) {
-      try {
-        await recordingRef.current.stopAndUnloadAsync();
-      } catch { /* ignore */ }
+      try { await recordingRef.current.stopAndUnloadAsync(); } catch { /* ignore */ }
       recordingRef.current = null;
     }
   }, []);
 
-  // ─── Video Frame Capture (1 FPS) ─────────────────────────────────────────────
-  const startVideoCapture = useCallback(() => {
-    if (videoIntervalRef.current) return;
-    videoIntervalRef.current = setInterval(async () => {
-      if (!cameraRef.current || isCameraOff) return;
-      try {
-        const photo = await cameraRef.current.takePictureAsync({
-          quality:  0.4,   // low quality = smaller JPEG = fewer tokens
-          base64:   true,
-          skipProcessing: true,
-        });
-        if (photo.base64) {
-          geminiSvc.current?.sendVideoFrame(photo.base64);
-        }
-      } catch { /* camera might not be ready */ }
-    }, 1000); // 1 FPS per best practices
-  }, [isCameraOff]);
+  // ✅ Uses expo-av Recording API
+  const makeRecordingOptions = () => ({
+    android: {
+      extension: '.wav',
+      outputFormat: Audio.AndroidOutputFormat.DEFAULT,
+      audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      bitRate: 128000,
+    },
+    ios: {
+      extension: '.wav',
+      outputFormat: Audio.IOSOutputFormat.LINEARPCM,
+      audioQuality: Audio.IOSAudioQuality.HIGH,
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      bitRate: 256000,
+      linearPCMBitDepth: 16,
+      linearPCMIsBigEndian: false,
+      linearPCMIsFloat: false,
+    },
+    web: {},
+  });
 
+  const startMicCapture = useCallback(async () => {
+    if (recordingRef.current) return;
+    try {
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(makeRecordingOptions());
+      await rec.startAsync();
+      recordingRef.current = rec;
+
+      chunkIntervalRef.current = setInterval(async () => {
+        if (!recordingRef.current || isMutedRef.current) return;
+        try {
+          await recordingRef.current.stopAndUnloadAsync();
+          const uri = recordingRef.current.getURI();
+
+          if (uri) {
+            const b64Full = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+            // Strip 44-byte WAV header to get raw PCM
+            const raw    = atob(b64Full);
+            const pcmRaw = raw.slice(44);
+            const pcmB64 = btoa(pcmRaw);
+            geminiRef.current?.sendAudioChunk(pcmB64);
+            FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+          }
+
+          // Restart for next chunk
+          const newRec = new Audio.Recording();
+          await newRec.prepareToRecordAsync(makeRecordingOptions());
+          await newRec.startAsync();
+          recordingRef.current = newRec;
+        } catch (e) {
+          console.warn('[Room] chunk error:', e.message);
+        }
+      }, 200);
+    } catch (err) {
+      console.error('[Room] startMicCapture:', err);
+    }
+  }, []);
+
+  // ─── Video capture (1 FPS) ────────────────────────────────────────────────────
   const stopVideoCapture = useCallback(() => {
     clearInterval(videoIntervalRef.current);
     videoIntervalRef.current = null;
   }, []);
 
-  // ─── Close Loading State (user exits during connection) ────────────────────────
-  const handleCloseLoading = useCallback(async () => {
-    Alert.alert(
-      'Exit Interview Setup?',
-      'Are you sure you want to exit? Your audio and video will be disconnected.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Exit',
-          style: 'destructive',
-          onPress: async () => {
-            await cleanup();
-            safeGoBack();
-          },
-        },
-      ]
-    );
-  }, [cleanup, safeGoBack]);
-
-  // ─── Start Interview (user taps "Start") ─────────────────────────────────────
-  const handleStart = useCallback(async () => {
-    console.log('🎬 [InterviewRoom] User tapped START button');
-    if (roomState !== STATE.READY) {
-      console.log('⚠️ [InterviewRoom] Not in READY state, ignoring start tap');
-      return;
-    }
-    console.log('▶️ [InterviewRoom] Transitioning to INTERVIEWING state');
-    setRoomState(STATE.INTERVIEWING);
-    setQuestionIndex(1);
-    setStatusLabel('Starting…');
-
-    // Begin video capture for non-verbal analysis
-    console.log('📹 [InterviewRoom] Starting video capture');
-    startVideoCapture();
-
-    // Prompt AI to start the interview (Q1)
-    console.log('💬 [InterviewRoom] Sending start prompt to AI');
-    geminiSvc.current?.sendTextPrompt(
-      'The user has clicked Start. Begin the interview immediately with Question 1. Do not re-introduce yourself.'
-    );
-    console.log('🔊 [InterviewRoom] AI now speaking (STATE.AI_SPEAKING)');
-    setRoomState(STATE.AI_SPEAKING);
-  }, [roomState, startVideoCapture]);
-
-  // ─── Toggle Mute ─────────────────────────────────────────────────────────────
-  const handleToggleMute = useCallback(async () => {
-    const nowMuted = !isMuted;
-    setIsMuted(nowMuted);
-    if (nowMuted) {
-      await stopMicCapture();
-      setStatusLabel('Microphone muted');
-    } else if (roomState === STATE.USER_SPEAKING) {
-      await startMicCapture();
-      setStatusLabel('Listening…');
-    }
-  }, [isMuted, roomState, stopMicCapture, startMicCapture]);
-
-  // ─── Toggle Camera ────────────────────────────────────────────────────────────
-  const handleToggleCamera = useCallback(() => {
-    setIsCameraOff(prev => !prev);
+  const startVideoCapture = useCallback(() => {
+    if (videoIntervalRef.current) return;
+    videoIntervalRef.current = setInterval(async () => {
+      if (!cameraRef.current || isCameraOffRef.current) return;
+      try {
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, base64: true, skipProcessing: true });
+        if (photo?.base64) geminiRef.current?.sendVideoFrame(photo.base64);
+      } catch { /* ignore — camera may not be ready */ }
+    }, 1000);
   }, []);
 
-  // ─── End Session ─────────────────────────────────────────────────────────────
-  const handleEndPress = useCallback(() => {
-    Alert.alert(
-      'End Interview?',
-      'Are you sure you want to end this session? Your progress will be saved.',
-      [
-        { text: 'Continue', style: 'cancel' },
-        { text: 'End Session', style: 'destructive', onPress: () => handleSessionEnd(true) },
-      ]
-    );
+  // ─── Master cleanup ───────────────────────────────────────────────────────────
+  const cleanup = useCallback(async () => {
+    clearInterval(chunkIntervalRef.current);
+    clearInterval(videoIntervalRef.current);
+    chunkIntervalRef.current = null;
+    videoIntervalRef.current = null;
+    if (recordingRef.current) {
+      try { await recordingRef.current.stopAndUnloadAsync(); } catch { /* ignore */ }
+      recordingRef.current = null;
+    }
+    if (playbackRef.current) {
+      try {
+        await playbackRef.current.stopAsync();
+        await playbackRef.current.unloadAsync();
+      } catch { /* ignore */ }
+      playbackRef.current = null;
+    }
+    geminiRef.current?.disconnect();
+    geminiRef.current = null;
   }, []);
 
+  // ─── Session end ──────────────────────────────────────────────────────────────
+  // BUG 4 FIX: store in ref so Gemini callback always calls the latest version
   const handleSessionEnd = useCallback(async (manual = false) => {
-    setRoomState(STATE.ENDED);
+    if (roomStateRef.current === STATE.ENDED) return; // prevent double-call
+    setRoomStateSynced(STATE.ENDED);
     setStatusLabel('Saving session…');
 
-    await stopMicCapture();
-    await stopPlayback();
-    stopVideoCapture();
-    geminiSvc.current?.disconnect();
+    await cleanup();
 
     const durationMs = sessionStartRef.current ? Date.now() - sessionStartRef.current : 0;
     const completed  = !manual && transcriptRef.current.length >= 4;
 
     try {
-      const savedId = await InterviewStorageService.saveSession({
+      await InterviewStorageService.saveSession({
         exchanges:   transcriptRef.current,
-        profile:     profile ?? {},
-        jobRole:     jobRole ?? '',
-        jobCompany:  jobCompany ?? '',
-        systemPrompt:'',
+        profile,
+        jobRole,
+        jobCompany,
+        systemPrompt: '',
         durationMs,
-        status:      completed ? 'completed' : 'incomplete',
+        status: completed ? 'completed' : 'incomplete',
       });
-      console.log('[InterviewRoom] Session saved:', savedId);
-    } catch (err) {
-      console.error('[InterviewRoom] Save error:', err);
+    } catch (e) {
+      console.error('[Room] saveSession:', e);
     }
 
-    // Navigate back with a refresh flag
-    navigation.replace('Main', { refreshInterviews: true });
-  }, [stopMicCapture, stopPlayback, stopVideoCapture, profile, jobRole, jobCompany, navigation]);
+    // BUG 3 FIX: use navigate + goBack, not replace
+    try { navigation.goBack(); } catch { navigation.navigate('Main'); }
+  }, [cleanup, profile, jobRole, jobCompany, navigation, setRoomStateSynced]);
 
-  // ─── Cleanup ──────────────────────────────────────────────────────────────────
-  const cleanup = useCallback(() => {
-    stopMicCapture();
-    stopPlayback();
-    stopVideoCapture();
-    geminiSvc.current?.disconnect();
-  }, [stopMicCapture, stopPlayback, stopVideoCapture]);
+  // Keep ref always fresh
+  useEffect(() => { handleSessionEndRef.current = handleSessionEnd; }, [handleSessionEnd]);
+
+  // ─── Initialise ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      // 1. Permissions
+      if (!cameraPermission?.granted) await requestCamera();
+      if (!micPermission?.granted)    await requestMic();
+
+      // 2. ✅ expo-av audio mode (NOT expo-audio)
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS:         true,
+          playsInSilentModeIOS:       true,
+          staysActiveInBackground:    false,
+          shouldDuckAndroid:          false,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch (e) {
+        console.error('[Room] Audio.setAudioModeAsync:', e);
+        Alert.alert('Audio Error', 'Could not configure audio. Please try again.');
+        safeGoBack();
+        return;
+      }
+
+      if (cancelled) return;
+      setLoadingMsg('Building your session…');
+
+      // 3. Build system instruction
+      const sysInstruction = buildSystemInstruction(profile, jobText);
+
+      if (cancelled) return;
+      setLoadingMsg('Connecting to VisionAlly AI…');
+
+      // 4. Create Gemini service
+      const svc = new GeminiLiveService();
+      geminiRef.current = svc;
+
+      // ── BUG 2 FIX: all callbacks read roomStateRef (not stale roomState) ──
+
+      svc.onSetupComplete = () => {
+        if (cancelled) return;
+        console.log('[Room] ✅ setupComplete → ready');
+        setRoomStateSynced(STATE.READY);
+        setStatusLabel('Tap Start to begin');
+      };
+      svc.onAudioReady = async (wavUri) => {
+        if (cancelled) return;
+        await playAudio(wavUri);
+      };
+
+      svc.onTurnComplete = () => {
+        if (cancelled) return;
+        const current = roomStateRef.current;
+        console.log('[Room] turnComplete, state:', current);
+
+        // ✅ Only handle AI_SPEAKING → USER_SPEAKING transition
+        if (current === STATE.AI_SPEAKING) {
+          setRoomStateSynced(STATE.USER_SPEAKING);
+          setStatusLabel('Your turn — speak now');
+          if (!isMutedRef.current) startMicCapture();
+        }
+      };
+      svc.onInterrupted = () => {
+        if (cancelled) return;
+        stopPlayback();
+        setRoomStateSynced(STATE.USER_SPEAKING);
+        setStatusLabel('Listening…');
+        if (!isMutedRef.current) startMicCapture();
+      };
+
+      // BUG 3 FIX: only end session if it actually started
+      svc.onSessionEnded = (code, reason) => {
+        if (cancelled) return;
+        console.log('[Room] onSessionEnded:', code, reason);
+        if (sessionStartedRef.current) {
+          // Session was running — save it
+          handleSessionEndRef.current?.(false);
+        } else {
+          // Never actually started (setup error) — just go back
+          Alert.alert('Connection Lost', `Could not maintain AI connection (${code}). Please try again.`);
+          safeGoBack();
+        }
+      };
+
+      svc.onError = (err) => {
+        if (cancelled) return;
+        console.error('[Room] Gemini error:', err);
+        Alert.alert('AI Error', err.message || 'Connection failed. Check your API key and internet.');
+        safeGoBack();
+      };
+
+      // 5. Connect
+      try {
+        await svc.connect(sysInstruction);
+        if (!cancelled) sessionStartRef.current = Date.now();
+      } catch (err) {
+        if (!cancelled) {
+          console.error('[Room] connect failed:', err);
+          Alert.alert('Connection Failed', 'Could not reach the AI service. Check your Gemini API key.');
+          safeGoBack();
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
+
+  // ─── Start (user taps button) ─────────────────────────────────────────────────
+  const handleStart = useCallback(() => {
+    if (roomStateRef.current !== STATE.READY) return;
+
+    sessionStartedRef.current = true;
+    questionIndexRef.current  = 1;
+    setQuestionIndex(1);
+    setRoomStateSynced(STATE.AI_SPEAKING);
+    setStatusLabel('Starting…');
+    startVideoCapture();
+
+    // ✅ Greeting + Q1 in one shot — no state race possible
+    geminiRef.current?.sendClientTurn(
+      `Greet ${profile?.firstName ?? 'the candidate'} warmly in 1-2 sentences as VisionAlly AI Interview Coach, ` +
+      `then immediately ask Question 1: "Can you start by telling me a bit about yourself and your background?"`
+    );
+  }, [setRoomStateSynced, startVideoCapture, profile]);
+  // ─── Mute toggle ──────────────────────────────────────────────────────────────
+  const handleToggleMute = useCallback(async () => {
+    const nowMuted = !isMutedRef.current;
+    setIsMuted(nowMuted);
+    if (nowMuted) {
+      await stopMicCapture();
+      setStatusLabel('Microphone muted');
+    } else if (roomStateRef.current === STATE.USER_SPEAKING) {
+      await startMicCapture();
+      setStatusLabel('Listening…');
+    }
+  }, [stopMicCapture, startMicCapture]);
+
+  // ─── Camera toggle ────────────────────────────────────────────────────────────
+  const handleToggleCamera = useCallback(() => {
+    setIsCameraOff(prev => !prev);
+  }, []);
+
+  // ─── End pressed ─────────────────────────────────────────────────────────────
+  const handleEndPress = useCallback(() => {
+    Alert.alert(
+      'End Interview?',
+      'Your progress so far will be saved.',
+      [
+        { text: 'Continue', style: 'cancel' },
+        { text: 'End Session', style: 'destructive', onPress: () => handleSessionEnd(true) },
+      ]
+    );
+  }, [handleSessionEnd]);
+
+  // ─── Loading close (during setup) ────────────────────────────────────────────
+  const handleCloseLoading = useCallback(() => {
+    Alert.alert(
+      'Cancel Setup?',
+      'Exit the interview setup?',
+      [
+        { text: 'Wait', style: 'cancel' },
+        { text: 'Exit', style: 'destructive', onPress: () => { cleanup(); safeGoBack(); } },
+      ]
+    );
+  }, [cleanup, safeGoBack]);
 
   // ─── Render ───────────────────────────────────────────────────────────────────
   const isLoading = roomState === STATE.LOADING;
@@ -538,160 +487,131 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const isEnded   = roomState === STATE.ENDED;
 
   return (
-    <View style={styles.container}>
+    <View style={s.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-      {/* ── Camera or Black Background ─────────────────────────────────────── */}
+      {/* Camera / black bg */}
       {!isCameraOff && cameraPermission?.granted ? (
-        <CameraView
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          facing="front"
-          mirror
-        />
+        <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="front" mirror />
       ) : (
-        <View style={[StyleSheet.absoluteFill, styles.cameraOff]}>
+        <View style={[StyleSheet.absoluteFill, s.cameraOff]}>
           <Ionicons name="videocam-off" size={48} color="rgba(255,255,255,0.3)" />
-          <Text style={styles.cameraOffText}>Camera off</Text>
+          <Text style={s.cameraOffTxt}>Camera off</Text>
         </View>
       )}
 
-      {/* ── Full-screen dark overlay ─────────────────────────────────────────── */}
+      {/* Gradient overlay */}
       <LinearGradient
-        colors={['rgba(0,0,0,0.55)', 'transparent', 'transparent', 'rgba(0,0,0,0.70)']}
+        colors={['rgba(0,0,0,0.6)', 'transparent', 'transparent', 'rgba(0,0,0,0.75)']}
         locations={[0, 0.25, 0.65, 1]}
         style={StyleSheet.absoluteFill}
         pointerEvents="none"
       />
 
-      {/* ── TOP BAR ─────────────────────────────────────────────────────────── */}
-      <Animated.View style={[styles.topBar, { opacity: fadeAnim }]}>
-        {/* LIVE Indicator */}
-        <View style={styles.livePill}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>LIVE</Text>
+      {/* Top bar */}
+      <Animated.View style={[s.topBar, { opacity: fadeAnim }]}>
+        <View style={s.livePill}>
+          <View style={s.liveDot} />
+          <Text style={s.liveTxt}>LIVE</Text>
         </View>
-
-        {/* Title */}
-        <Text style={styles.topBarTitle}>VisionAlly</Text>
-
-        {/* Q counter */}
+        <Text style={s.topTitle}>VisionAlly</Text>
         {questionIndex > 0 && (
-          <View style={styles.qCounter}>
-            <Text style={styles.qCounterText}>Q {questionIndex}/4</Text>
+          <View style={s.qChip}>
+            <Text style={s.qChipTxt}>Q {questionIndex}/4</Text>
           </View>
         )}
       </Animated.View>
 
-      {/* ── LOADING OVERLAY ─────────────────────────────────────────────────── */}
+      {/* Loading overlay */}
       {isLoading && (
-        <View style={styles.loadingOverlay}>
-          {/* Close Button (top right) */}
-          <TouchableOpacity
-            style={styles.loadingCloseBtn}
-            onPress={handleCloseLoading}
-            activeOpacity={0.7}
-          >
+        <View style={s.loadingOverlay}>
+          <TouchableOpacity style={s.loadingClose} onPress={handleCloseLoading}>
             <Ionicons name="close-circle" size={32} color={C.white} />
           </TouchableOpacity>
-
-          {/* Loading Indicator & Message */}
           <ActivityIndicator size="large" color={C.white} />
-          <Text style={styles.loadingText}>{loadingMsg}</Text>
-          <Text style={styles.loadingHint}>Tap the close button if this is taking too long</Text>
+          <Text style={s.loadingTxt}>{loadingMsg}</Text>
+          <Text style={s.loadingHint}>Tap × to cancel if this takes too long</Text>
         </View>
       )}
 
-      {/* ── START BUTTON (shown after AI intro) ─────────────────────────────── */}
+      {/* Start button (pulsing) */}
       {isReady && (
-        <View style={styles.startContainer}>
-          {/* Outer glow rings */}
-          <Animated.View style={[styles.startRing, styles.startRingOuter,
-            { transform: [{ scale: startPulse }], opacity: 0.25 }]} />
-          <Animated.View style={[styles.startRing, styles.startRingInner,
-            { transform: [{ scale: startPulse }], opacity: 0.40 }]} />
-          {/* Button */}
-          <TouchableOpacity style={styles.startBtn} onPress={handleStart} activeOpacity={0.85}>
-            <LinearGradient colors={[C.primary, C.primaryDark]} style={styles.startBtnGradient}>
-              <Ionicons name="play" size={28} color={C.white} />
+        <View style={s.startWrap}>
+          <Animated.View style={[s.ring, s.ringOuter, { transform: [{ scale: startPulse }], opacity: 0.25 }]} />
+          <Animated.View style={[s.ring, s.ringInner, { transform: [{ scale: startPulse }], opacity: 0.40 }]} />
+          <TouchableOpacity style={s.startBtn} onPress={handleStart} activeOpacity={0.85}>
+            <LinearGradient colors={[C.primary, C.primaryDark]} style={s.startGradient}>
+              <Ionicons name="play" size={30} color={C.white} />
             </LinearGradient>
           </TouchableOpacity>
-          <Text style={styles.startLabel}>Tap to Start</Text>
+          <Text style={s.startLabel}>Tap to Start</Text>
         </View>
       )}
 
-      {/* ── AI SPEAKING Waveform hint ────────────────────────────────────────── */}
+      {/* AI speaking waveform */}
       {roomState === STATE.AI_SPEAKING && !isLoading && (
-        <View style={styles.speakingIndicator}>
-          <View style={styles.speakingDots}>
-            {[0, 1, 2, 3, 4].map(i => (
-              <Animated.View key={i} style={[styles.speakingDot, { height: 6 + (i % 3) * 8 }]} />
+        <View style={s.speakWrap}>
+          <View style={s.dots}>
+            {[0,1,2,3,4].map(i => (
+              <View key={i} style={[s.dot, { height: 6 + (i % 3) * 8 }]} />
             ))}
           </View>
-          <Text style={styles.speakingLabel}>VisionAlly is speaking…</Text>
+          <Text style={s.speakTxt}>VisionAlly is speaking…</Text>
         </View>
       )}
 
-      {/* ── USER SPEAKING indicator ──────────────────────────────────────────── */}
+      {/* User speaking */}
       {roomState === STATE.USER_SPEAKING && (
-        <View style={styles.speakingIndicator}>
-          <Animated.View style={[styles.micRing, { transform: [{ scale: micPulse }] }]}>
+        <View style={s.speakWrap}>
+          <Animated.View style={[s.micRing, { transform: [{ scale: micPulse }] }]}>
             <Ionicons name="mic" size={20} color={C.white} />
           </Animated.View>
-          <Text style={styles.speakingLabel}>Listening…</Text>
+          <Text style={s.speakTxt}>Listening…</Text>
         </View>
       )}
 
-      {/* ── STATUS LABEL ────────────────────────────────────────────────────── */}
+      {/* Status label */}
       {statusLabel.length > 0 && !isLoading && !isReady && (
-        <View style={styles.statusLabelContainer}>
-          <Text style={styles.statusLabelText}>{statusLabel}</Text>
+        <View style={s.statusWrap}>
+          <Text style={s.statusTxt}>{statusLabel}</Text>
         </View>
       )}
 
-      {/* ── BOTTOM CONTROLS ─────────────────────────────────────────────────── */}
+      {/* Bottom controls */}
       {!isLoading && !isEnded && (
-        <Animated.View style={[styles.controls, { opacity: fadeAnim }]}>
-          {/* Camera Toggle */}
-          <TouchableOpacity style={styles.ctrlBtn} onPress={handleToggleCamera} activeOpacity={0.8}>
-            <View style={[styles.ctrlBtnInner, isCameraOff && styles.ctrlBtnActive]}>
-              <Ionicons
-                name={isCameraOff ? 'videocam-off' : 'videocam'}
-                size={22}
-                color={C.white}
-              />
+        <Animated.View style={[s.controls, { opacity: fadeAnim }]}>
+          {/* Camera */}
+          <TouchableOpacity style={s.ctrl} onPress={handleToggleCamera} activeOpacity={0.8}>
+            <View style={[s.ctrlInner, isCameraOff && s.ctrlActive]}>
+              <Ionicons name={isCameraOff ? 'videocam-off' : 'videocam'} size={22} color={C.white} />
             </View>
-            <Text style={styles.ctrlLabel}>{isCameraOff ? 'Camera Off' : 'Camera'}</Text>
+            <Text style={s.ctrlLbl}>{isCameraOff ? 'Camera Off' : 'Camera'}</Text>
           </TouchableOpacity>
 
-          {/* End Session (centre, red) */}
-          <TouchableOpacity style={styles.endBtn} onPress={handleEndPress} activeOpacity={0.85}>
-            <View style={styles.endBtnInner}>
+          {/* End (red) */}
+          <TouchableOpacity style={s.endCtrl} onPress={handleEndPress} activeOpacity={0.85}>
+            <View style={s.endBtn}>
               <Ionicons name="close" size={28} color={C.white} />
             </View>
-            <Text style={styles.ctrlLabel}>End</Text>
+            <Text style={s.ctrlLbl}>End</Text>
           </TouchableOpacity>
 
-          {/* Mute / Unmute */}
-          <TouchableOpacity style={styles.ctrlBtn} onPress={handleToggleMute} activeOpacity={0.8}>
-            <View style={[styles.ctrlBtnInner, isMuted && styles.ctrlBtnActive]}>
-              <Ionicons
-                name={isMuted ? 'mic-off' : 'mic'}
-                size={22}
-                color={C.white}
-              />
+          {/* Mute */}
+          <TouchableOpacity style={s.ctrl} onPress={handleToggleMute} activeOpacity={0.8}>
+            <View style={[s.ctrlInner, isMuted && s.ctrlActive]}>
+              <Ionicons name={isMuted ? 'mic-off' : 'mic'} size={22} color={C.white} />
             </View>
-            <Text style={styles.ctrlLabel}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+            <Text style={s.ctrlLbl}>{isMuted ? 'Unmute' : 'Mute'}</Text>
           </TouchableOpacity>
         </Animated.View>
       )}
 
-      {/* ── ENDED STATE ─────────────────────────────────────────────────────── */}
+      {/* Ended overlay */}
       {isEnded && (
-        <View style={styles.endedOverlay}>
+        <View style={s.endedOverlay}>
           <Ionicons name="checkmark-circle" size={64} color={C.success} />
-          <Text style={styles.endedTitle}>Session Complete</Text>
-          <Text style={styles.endedSub}>Saving your results…</Text>
+          <Text style={s.endedTitle}>Session Complete</Text>
+          <Text style={s.endedSub}>Saving your results…</Text>
           <ActivityIndicator size="small" color={C.white} style={{ marginTop: 16 }} />
         </View>
       )}
@@ -700,146 +620,61 @@ export default function InterviewRoomScreen({ navigation, route }) {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const CTRL_SIZE  = 60;
-const END_SIZE   = 72;
+const CTRL = 60;
+const END  = 72;
 
-const styles = StyleSheet.create({
-  container:   { flex: 1, backgroundColor: C.black },
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.black },
 
-  // Camera off
-  cameraOff: {
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#0F0F0F',
-  },
-  cameraOffText: { color: 'rgba(255,255,255,0.3)', fontSize: 14, marginTop: 10 },
+  cameraOff: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0D0D0D' },
+  cameraOffTxt: { color: 'rgba(255,255,255,0.3)', fontSize: 14, marginTop: 10 },
 
-  // Top bar
   topBar: {
-    position: 'absolute', top: 0, left: 0, right: 0,
+    position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingTop: Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight || 0) + 14,
     paddingHorizontal: 20, paddingBottom: 14, gap: 10,
-    zIndex: 10,
   },
-  livePill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(239,68,68,0.85)',
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
-  },
+  livePill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(239,68,68,0.85)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
   liveDot:  { width: 7, height: 7, borderRadius: 4, backgroundColor: C.white },
-  liveText: { fontSize: 11, fontWeight: '800', color: C.white, letterSpacing: 1 },
+  liveTxt:  { fontSize: 11, fontWeight: '800', color: C.white, letterSpacing: 1 },
+  topTitle: { fontSize: 18, fontWeight: '800', color: C.white, flex: 1, textAlign: 'center' },
+  qChip:    { backgroundColor: C.glass, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  qChipTxt: { fontSize: 12, fontWeight: '700', color: C.white },
 
-  topBarTitle: { fontSize: 18, fontWeight: '800', color: C.white, flex: 1, textAlign: 'center' },
+  loadingOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)', gap: 16 },
+  loadingClose:   { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, padding: 8, zIndex: 10 },
+  loadingTxt:     { color: C.white, fontSize: 15, fontWeight: '600', textAlign: 'center' },
+  loadingHint:    { color: 'rgba(255,255,255,0.55)', fontSize: 12, textAlign: 'center' },
 
-  qCounter: {
-    backgroundColor: C.glass, paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-  },
-  qCounterText: { fontSize: 12, fontWeight: '700', color: C.white },
+  startWrap: { position: 'absolute', top: H * 0.40, left: 0, right: 0, alignItems: 'center', justifyContent: 'center' },
+  ring:        { position: 'absolute', borderRadius: 1000, backgroundColor: C.primary },
+  ringOuter:   { width: 160, height: 160 },
+  ringInner:   { width: 120, height: 120 },
+  startBtn:    { width: 90, height: 90, borderRadius: 45, overflow: 'hidden', ...Platform.select({ ios: { shadowColor: C.primary, shadowOffset:{width:0,height:8}, shadowOpacity:0.5, shadowRadius:16 }, android: { elevation: 12 } }) },
+  startGradient: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  startLabel:  { marginTop: 58, color: C.white, fontSize: 15, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset:{width:0,height:1}, textShadowRadius:4 },
 
-  // Loading
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.70)', gap: 16,
-  },
-  loadingText: { color: C.white, fontSize: 15, fontWeight: '600', textAlign: 'center' },
-  loadingHint: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '500', textAlign: 'center', marginTop: 8 },
-  loadingCloseBtn: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 60 : 40,
-    right: 20,
-    padding: 8,
-    zIndex: 10,
-  },
+  speakWrap: { position: 'absolute', bottom: 160, left: 0, right: 0, alignItems: 'center', gap: 10 },
+  dots:      { flexDirection: 'row', alignItems: 'flex-end', gap: 4 },
+  dot:       { width: 4, borderRadius: 2, backgroundColor: C.primary, opacity: 0.9 },
+  speakTxt:  { color: C.white, fontSize: 13, fontWeight: '600', textShadowColor:'rgba(0,0,0,0.6)', textShadowOffset:{width:0,height:1}, textShadowRadius:4 },
+  micRing:   { width: 44, height: 44, borderRadius: 22, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
 
-  // Start button
-  startContainer: {
-    position: 'absolute',
-    top: H * 0.40, left: 0, right: 0,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  startRing: {
-    position: 'absolute',
-    borderRadius: 1000, backgroundColor: C.primary,
-  },
-  startRingOuter: { width: 160, height: 160 },
-  startRingInner: { width: 120, height: 120 },
-  startBtn: {
-    width: 90, height: 90, borderRadius: 45, overflow: 'hidden',
-    ...Platform.select({
-      ios:     { shadowColor: C.primary, shadowOffset:{width:0,height:8}, shadowOpacity:0.5, shadowRadius:16 },
-      android: { elevation: 12 },
-    }),
-  },
-  startBtnGradient: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  startLabel: {
-    marginTop: 58, color: C.white, fontSize: 15, fontWeight: '700',
-    textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset:{width:0,height:1}, textShadowRadius:4,
-  },
+  statusWrap: { position: 'absolute', bottom: 148, left: 0, right: 0, alignItems: 'center' },
+  statusTxt:  { color: 'rgba(255,255,255,0.80)', fontSize: 13, fontWeight: '600', backgroundColor: 'rgba(0,0,0,0.35)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
 
-  // Speaking indicators
-  speakingIndicator: {
-    position: 'absolute', bottom: 160, left: 0, right: 0,
-    alignItems: 'center', gap: 10,
-  },
-  speakingDots: { flexDirection: 'row', alignItems: 'flex-end', gap: 4 },
-  speakingDot:  {
-    width: 4, borderRadius: 2, backgroundColor: C.primary,
-    opacity: 0.9,
-  },
-  speakingLabel: {
-    color: C.white, fontSize: 13, fontWeight: '600',
-    textShadowColor:'rgba(0,0,0,0.6)', textShadowOffset:{width:0,height:1}, textShadowRadius:4,
-  },
-  micRing: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center',
-  },
+  controls: { position: 'absolute', bottom: Platform.OS === 'ios' ? 44 : 24, left: 0, right: 0, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 28, paddingHorizontal: 30 },
+  ctrl:      { alignItems: 'center', gap: 6 },
+  ctrlInner: { width: CTRL, height: CTRL, borderRadius: CTRL/2, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
+  ctrlActive:{ backgroundColor: 'rgba(139,92,246,0.55)', borderColor: C.primary },
+  ctrlLbl:   { color: C.white, fontSize: 11, fontWeight: '600', textAlign: 'center' },
+  endCtrl:   { alignItems: 'center', gap: 6 },
+  endBtn:    { width: END, height: END, borderRadius: END/2, backgroundColor: C.error, alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: C.error, shadowOffset:{width:0,height:6}, shadowOpacity:0.45, shadowRadius:12 }, android: { elevation: 10 } }) },
 
-  // Status label
-  statusLabelContainer: {
-    position: 'absolute', bottom: 148, left: 0, right: 0, alignItems: 'center',
-  },
-  statusLabelText: {
-    color: 'rgba(255,255,255,0.80)', fontSize: 13, fontWeight: '600',
-    backgroundColor: 'rgba(0,0,0,0.35)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
-  },
-
-  // Bottom controls
-  controls: {
-    position: 'absolute', bottom: Platform.OS === 'ios' ? 44 : 24,
-    left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'flex-end',
-    justifyContent: 'center', gap: 28, paddingHorizontal: 30,
-  },
-  ctrlBtn:      { alignItems: 'center', gap: 6 },
-  ctrlBtnInner: {
-    width: CTRL_SIZE, height: CTRL_SIZE, borderRadius: CTRL_SIZE / 2,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-  },
-  ctrlBtnActive: { backgroundColor: 'rgba(139,92,246,0.55)', borderColor: C.primary },
-  ctrlLabel:     { color: C.white, fontSize: 11, fontWeight: '600', textAlign: 'center' },
-
-  // End button (red)
-  endBtn:      { alignItems: 'center', gap: 6 },
-  endBtnInner: {
-    width: END_SIZE, height: END_SIZE, borderRadius: END_SIZE / 2,
-    backgroundColor: C.error, alignItems: 'center', justifyContent: 'center',
-    ...Platform.select({
-      ios:     { shadowColor: C.error, shadowOffset:{width:0,height:6}, shadowOpacity:0.45, shadowRadius:12 },
-      android: { elevation: 10 },
-    }),
-  },
-
-  // Ended overlay
-  endedOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.80)',
-    alignItems: 'center', justifyContent: 'center', gap: 12,
-  },
-  endedTitle: { color: C.white, fontSize: 24, fontWeight: '800' },
-  endedSub:   { color: 'rgba(255,255,255,0.70)', fontSize: 14, fontWeight: '500' },
+  endedOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.82)', alignItems: 'center', justifyContent: 'center', gap: 12 },
+  endedTitle:   { color: C.white, fontSize: 24, fontWeight: '800' },
+  endedSub:     { color: 'rgba(255,255,255,0.70)', fontSize: 14, fontWeight: '500' },
 });
+
+// Need to import StyleSheet properly
