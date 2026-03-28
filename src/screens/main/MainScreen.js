@@ -122,6 +122,8 @@ export default function MainScreen({ navigation }) {
     ? { navigation }
     : activeTab === 'chat' 
     ? { navigation }
+    : activeTab === 'interviewer'
+    ? { navigation }
     : activeTab === 'profile'
     ? { navigation }
     : {};

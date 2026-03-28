@@ -1,5 +1,5 @@
 // src/screens/main/InterviewerScreen.js
-import React, { useState, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,11 +12,17 @@ import {
   Platform,
   StatusBar,
   Dimensions,
-  Animated,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, firestore } from '../../../firebase';
+import { analyseJobDocument } from '../../services/GeminiLiveService';
+import { InterviewStorageService } from '../../services/InterviewStorageService';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -40,80 +46,25 @@ const COLORS = {
   gold: '#F59E0B',
 };
 
-// ─── Mock Past Interview Data ──────────────────────────────────────────────────
-const MOCK_INTERVIEWS = [
-  {
-    id: '1',
-    role: 'UX/UI Designer',
-    company: 'Creative Studios Inc.',
-    date: 'Today, 10:30 AM',
-    duration: '18 min',
-    score: 87,
-    status: 'completed',
-    tags: ['Portfolio Review', 'Design Thinking'],
-    feedback: 'Strong visual communication. Work on pacing.',
-    isFavorite: true,
-    scoreColor: '#10B981',
-  },
-  {
-    id: '2',
-    role: 'Customer Support Manager',
-    company: 'RetailPro Solutions',
-    date: 'Yesterday, 3:15 PM',
-    duration: '22 min',
-    score: 73,
-    status: 'completed',
-    tags: ['Conflict Resolution', 'Leadership'],
-    feedback: 'Great empathy shown. Structure answers with STAR.',
-    isFavorite: false,
-    scoreColor: '#F59E0B',
-  },
-  {
-    id: '3',
-    role: 'Junior Data Analyst',
-    company: 'FinTech Dynamics',
-    date: '25 Mar, 9:00 AM',
-    duration: '14 min',
-    score: 91,
-    status: 'completed',
-    tags: ['SQL', 'Data Storytelling'],
-    feedback: 'Excellent clarity and confidence throughout.',
-    isFavorite: true,
-    scoreColor: '#10B981',
-  },
-  {
-    id: '4',
-    role: 'Front-End Developer',
-    company: 'Startup Nexus',
-    date: '22 Mar, 2:45 PM',
-    duration: '—',
-    score: null,
-    status: 'incomplete',
-    tags: ['React', 'Accessibility'],
-    feedback: 'Session ended early. Resume anytime.',
-    isFavorite: false,
-    scoreColor: '#6B7280',
-  },
-];
-
-
-
-// ─── Coming Soon Alert ─────────────────────────────────────────────────────────
-const showComingSoon = (feature = 'This feature') => {
-  Alert.alert(
-    '🚧 Coming Soon',
-    `${feature} is currently under development and will be available very soon. Stay tuned!`,
-    [{ text: 'Got it', style: 'default' }]
-  );
-};
-
-// ─── About Info Alert ─────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const showAboutInfo = () => {
   Alert.alert(
     '🤖 VisionAlly AI Interviewer',
-    `The VisionAlly AI Interviewer is your personal, real-time mock interview coach — powered by Google Gemini 2.5 Flash Live API.\n\nHow it helps you:\n\n🎙️ Conducts live video & audio mock interviews tailored to your target role.\n\n📊 Analyses your vocal tone, pacing, confidence, and non-verbal cues in real time.\n\n♿ Adapts its coaching style to your accessibility profile and disability disclosure preferences.\n\n💡 Provides instant, actionable feedback after every answer.\n\n🧠 Learns from your past sessions to track growth and highlight improvement areas.\n\nEvery session brings you one step closer to interview success.`,
+    'The VisionAlly AI Interviewer is your personal, real-time mock interview coach — powered by Google Gemini Live API.\n\n' +
+    '🎙️ Live video & audio mock interviews tailored to your role.\n\n' +
+    '📊 Analyses vocal tone, pacing, confidence, and non-verbal cues in real time.\n\n' +
+    '♿ Adapts to your accessibility profile and communication preferences.\n\n' +
+    '💡 Instant, actionable feedback after every answer.\n\n' +
+    '🧠 Tracks growth across sessions.',
     [{ text: 'Close', style: 'cancel' }]
   );
+};
+
+const scoreToColor = (score) => {
+  if (!score) return '#6B7280';
+  if (score >= 80) return '#10B981';
+  if (score >= 60) return '#F59E0B';
+  return '#EF4444';
 };
 
 // ─── Score Ring Component ──────────────────────────────────────────────────────
@@ -136,13 +87,10 @@ const ScoreRing = ({ score, color }) => {
 // ─── Interview Card Component ──────────────────────────────────────────────────
 const InterviewCard = ({ item, onToggleFavorite, onDelete }) => {
   const isIncomplete = item.status === 'incomplete';
+  const scoreColor = item.scoreColor ?? scoreToColor(item.score);
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.92}
-      style={styles.card}
-      onPress={() => showComingSoon('Replay & detailed feedback')}
-    >
+    <TouchableOpacity activeOpacity={0.92} style={styles.card}>
       {/* Card Header */}
       <View style={styles.cardHeader}>
         <View style={styles.cardIconWrapper}>
@@ -203,7 +151,7 @@ const InterviewCard = ({ item, onToggleFavorite, onDelete }) => {
 
         {/* Tags row */}
         <View style={styles.tagsRow}>
-          {item.tags.map((tag, idx) => (
+          {item.tags?.map((tag, idx) => (
             <View key={idx} style={styles.tag}>
               <Text style={styles.tagText}>{tag}</Text>
             </View>
@@ -216,34 +164,25 @@ const InterviewCard = ({ item, onToggleFavorite, onDelete }) => {
             <Ionicons name="chatbubble-ellipses-outline" size={13} color={COLORS.primary} style={{ marginTop: 1 }} />
             <Text style={styles.feedbackText} numberOfLines={2}>{item.feedback}</Text>
           </View>
-          <ScoreRing score={item.score} color={item.scoreColor} />
+          <ScoreRing score={item.score} color={scoreColor} />
         </View>
       </View>
 
       {/* Card Footer */}
       <View style={styles.cardFooter}>
-        <TouchableOpacity
-          style={styles.footerBtn}
-          onPress={() => showComingSoon('Replay interview')}
-        >
+        <TouchableOpacity style={styles.footerBtn}>
           <Ionicons name="play-circle-outline" size={15} color={COLORS.primary} />
           <Text style={styles.footerBtnText}>
             {isIncomplete ? 'Resume' : 'Replay'}
           </Text>
         </TouchableOpacity>
         <View style={styles.footerSep} />
-        <TouchableOpacity
-          style={styles.footerBtn}
-          onPress={() => showComingSoon('Full feedback report')}
-        >
+        <TouchableOpacity style={styles.footerBtn}>
           <Ionicons name="bar-chart-outline" size={15} color={COLORS.primary} />
           <Text style={styles.footerBtnText}>Feedback</Text>
         </TouchableOpacity>
         <View style={styles.footerSep} />
-        <TouchableOpacity
-          style={styles.footerBtn}
-          onPress={() => onDelete(item.id)}
-        >
+        <TouchableOpacity style={styles.footerBtn} onPress={() => onDelete(item.id)}>
           <Ionicons name="trash-outline" size={15} color={COLORS.error} />
           <Text style={[styles.footerBtnText, { color: COLORS.error }]}>Delete</Text>
         </TouchableOpacity>
@@ -253,62 +192,240 @@ const InterviewCard = ({ item, onToggleFavorite, onDelete }) => {
 };
 
 // ─── Main Screen ───────────────────────────────────────────────────────────────
-export default function InterviewerScreen({ navigation }) {
+export default function InterviewerScreen({ navigation, route }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('newest');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [interviews, setInterviews] = useState(MOCK_INTERVIEWS);
+  const [interviews, setInterviews] = useState([]);
+  const [loadingStart, setLoadingStart] = useState(false);
 
-  const toggleFavorite = (id) => {
-    setInterviews((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
-      )
-    );
+  // ── Load sessions from AsyncStorage ─────────────────────────────────────────
+  const loadSessions = useCallback(async () => {
+    const sessions = await InterviewStorageService.getAllSessions();
+    setInterviews(sessions);
+  }, []);
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  // Refresh when coming back from InterviewRoomScreen
+  useEffect(() => {
+    if (route?.params?.refreshInterviews) {
+      loadSessions();
+    }
+  }, [route?.params?.refreshInterviews, loadSessions]);
+
+  // ── Toggle / Delete ──────────────────────────────────────────────────────────
+  const toggleFavorite = async (id) => {
+    await InterviewStorageService.toggleFavorite(id);
+    loadSessions();
   };
 
   const deleteInterview = (id) => {
     Alert.alert(
       'Delete Interview',
-      'Are you sure you want to delete this interview session? This action cannot be undone.',
+      'Are you sure you want to delete this session? This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            setInterviews((prev) => prev.filter((item) => item.id !== id));
+          text: 'Delete', style: 'destructive',
+          onPress: async () => {
+            await InterviewStorageService.deleteSession(id);
+            loadSessions();
           },
         },
       ]
     );
   };
 
-  const filteredInterviews = (() => {
-    let filtered = interviews.filter((item) => {
-      const matchesSearch =
-        item.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
-      const matchesFav = favoritesOnly ? item.isFavorite : true;
-      return matchesSearch && matchesFav;
-    });
-    
-    if (sortBy === 'oldest') {
-      filtered = filtered.reverse();
+  // ─── START INTERVIEW FLOW ────────────────────────────────────────────────────
+  const handleStartInterview = async () => {
+    setLoadingStart(true);
+    try {
+      const uid = auth.currentUser?.uid;
+      if (!uid) {
+        Alert.alert('Not logged in', 'Please log in to start an interview.');
+        return;
+      }
+
+      // 1. Check Firestore for About Me profile
+      let profile = null;
+      try {
+        const snap = await getDoc(doc(firestore, 'users', uid, 'profile', 'about_me'));
+        profile = snap.exists() ? snap.data() : null;
+      } catch {
+        // Fallback to local cache
+        profile = await InterviewStorageService.getCachedAboutMe();
+      }
+
+      // 2. First time / no profile → must complete About Me first
+      if (!profile || !profile.firstName || !profile.careerGoal) {
+        Alert.alert(
+          '👤 Complete Your Profile First',
+          'To personalise your AI interview session, please fill in your About Me profile. This only takes 2 minutes!',
+          [
+            { text: 'Not Now', style: 'cancel' },
+            {
+              text: 'Complete Profile',
+              onPress: () => {
+                navigation.navigate('AboutMe', {
+                  onComplete: (savedProfile) => {
+                    // After saving, automatically continue the start flow
+                    setLoadingStart(false);
+                    setTimeout(() => continueStartFlow(savedProfile), 600);
+                  },
+                });
+              },
+            },
+          ],
+        );
+        return;
+      }
+
+      // 3. Profile exists → ask to confirm + optional document
+      setLoadingStart(false);
+      await continueStartFlow(profile);
+
+    } catch (err) {
+      console.error('[InterviewerScreen] handleStartInterview error:', err);
+      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } finally {
+      setLoadingStart(false);
     }
-    
-    return filtered;
+  };
+
+  const continueStartFlow = async (profile) => {
+    // Ask user to confirm profile or update it
+    Alert.alert(
+      `👋 Hi ${profile.firstName}!`,
+      `Using your saved profile:\n📋 ${profile.field ?? 'General'} • ${profile.experience ?? '0'} yr(s) exp.\n\nWould you like to add a job offer document so the AI focuses on that specific role?`,
+      [
+        {
+          text: 'Skip, Start Now',
+          onPress: () => launchInterviewRoom(profile, '', '', ''),
+        },
+        {
+          text: '📎 Upload Job Offer',
+          onPress: () => showDocumentOptions(profile),
+        },
+        {
+          text: 'Update Profile',
+          style: 'cancel',
+          onPress: () => {
+            navigation.navigate('AboutMe', {
+              onComplete: (updated) => continueStartFlow(updated),
+            });
+          },
+        },
+      ],
+    );
+  };
+
+  const showDocumentOptions = (profile) => {
+    Alert.alert(
+      'Upload Job Offer',
+      'Choose how to provide the job details:',
+      [
+        {
+          text: '📷 Photo (image)',
+          onPress: () => pickImage(profile),
+        },
+        {
+          text: '📄 PDF Document',
+          onPress: () => pickPDF(profile),
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ],
+    );
+  };
+
+  const pickImage = async (profile) => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow photo library access to upload a job offer image.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.7,
+      base64: true,
+    });
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      const mimeType = asset.mimeType ?? 'image/jpeg';
+      const b64 = asset.base64;
+      await analyseAndStart(profile, b64, mimeType);
+    }
+  };
+
+  const pickPDF = async (profile) => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: 'application/pdf',
+      copyToCacheDirectory: true,
+    });
+    if (!result.canceled && result.assets?.[0]) {
+      const uri = result.assets[0].uri;
+      const b64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      await analyseAndStart(profile, b64, 'application/pdf');
+    }
+  };
+
+  const analyseAndStart = async (profile, base64Data, mimeType) => {
+    setLoadingStart(true);
+    Alert.alert(
+      '🔍 Analysing Document',
+      'VisionAlly is reading your job offer to personalise the interview. This takes a few seconds…',
+      [],
+    );
+    try {
+      const jobText = await analyseJobDocument(base64Data, mimeType);
+      // Extract role and company from the analysis (simple heuristic)
+      const roleMatch = jobText.match(/job title[:\s]+([^\n]+)/i);
+      const companyMatch = jobText.match(/company(?:\s+name)?[:\s]+([^\n]+)/i);
+      const jobRole = roleMatch?.[1]?.trim() ?? 'Specific Role';
+      const jobCompany = companyMatch?.[1]?.trim() ?? '—';
+
+      launchInterviewRoom(profile, jobText, jobRole, jobCompany);
+    } catch (err) {
+      console.error('[InterviewerScreen] analyse error:', err);
+      Alert.alert(
+        'Analysis Failed',
+        'Could not read the document. Starting without it — you can still have a great practice session!',
+        [{ text: 'Continue', onPress: () => launchInterviewRoom(profile, '', '', '') }],
+      );
+    } finally {
+      setLoadingStart(false);
+    }
+  };
+
+  const launchInterviewRoom = (profile, jobText, jobRole, jobCompany) => {
+    navigation.navigate('InterviewRoom', {
+      profile, jobText, jobRole, jobCompany,
+    });
+  };
+
+  // ── Filtered / sorted list ───────────────────────────────────────────────────
+  const filteredInterviews = (() => {
+    let list = interviews.filter(item => {
+      const q = searchQuery.toLowerCase();
+      const matchSearch =
+        item.role?.toLowerCase().includes(q) ||
+        item.company?.toLowerCase().includes(q) ||
+        item.tags?.some(t => t.toLowerCase().includes(q));
+      const matchFav = favoritesOnly ? item.isFavorite : true;
+      return matchSearch && matchFav;
+    });
+    if (sortBy === 'oldest') list = [...list].reverse();
+    return list;
   })();
 
-  const completedCount = interviews.filter((i) => i.status === 'completed').length;
-  const avgScore = Math.round(
-    interviews
-      .filter((i) => i.score)
-      .reduce((acc, i) => acc + i.score, 0) /
-      interviews.filter((i) => i.score).length
-  );
-
+  // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
@@ -343,28 +460,28 @@ export default function InterviewerScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-        {/* ── Tips Banner ─────────────────────────────────────── */}
-        <LinearGradient
-          colors={['rgba(139,92,246,0.08)', 'rgba(167,139,250,0.04)']}
-          style={styles.tipBanner}
-        >
-          <View style={styles.tipBannerIconWrapper}>
-            <Ionicons name="bulb" size={22} color={COLORS.primary} />
-          </View>
-          <View style={styles.tipBannerContent}>
-            <Text style={styles.tipBannerTitle}>Pro Tip</Text>
-            <Text style={styles.tipBannerText}>
-              Complete your "About Me" profile so the AI can tailor every mock interview to your specific disability, role, and experience level.
-            </Text>
-          </View>
-        </LinearGradient>
+      {/* ── Tips Banner ─────────────────────────────────────── */}
+      <LinearGradient
+        colors={['rgba(139,92,246,0.08)', 'rgba(167,139,250,0.04)']}
+        style={styles.tipBanner}
+      >
+        <View style={styles.tipBannerIconWrapper}>
+          <Ionicons name="bulb" size={22} color={COLORS.primary} />
+        </View>
+        <View style={styles.tipBannerContent}>
+          <Text style={styles.tipBannerTitle}>Pro Tip</Text>
+          <Text style={styles.tipBannerText}>
+            Upload a real job offer so VisionAlly can ask you the most relevant questions for that exact role.
+          </Text>
+        </View>
+      </LinearGradient>
 
       {/* ── CTA Buttons ──────────────────────────────────────── */}
       <View style={styles.ctaRow}>
         {/* About Me Info */}
         <TouchableOpacity
           style={styles.ctaSecondary}
-          onPress={() => showComingSoon('About Me profile setup')}
+          onPress={() => navigation.navigate('AboutMe', {})}
           activeOpacity={0.85}
         >
           <LinearGradient
@@ -372,15 +489,16 @@ export default function InterviewerScreen({ navigation }) {
             style={styles.ctaSecondaryGradient}
           >
             <Ionicons name="person-circle-outline" size={18} color={COLORS.primaryDark} />
-            <Text style={styles.ctaSecondaryText}>About Me Info</Text>
+            <Text style={styles.ctaSecondaryText}>About Me</Text>
           </LinearGradient>
         </TouchableOpacity>
 
         {/* Start New Interview */}
         <TouchableOpacity
           style={styles.ctaPrimary}
-          onPress={() => showComingSoon('AI Interview session')}
+          onPress={handleStartInterview}
           activeOpacity={0.85}
+          disabled={loadingStart}
         >
           <LinearGradient
             colors={[COLORS.primary, COLORS.primaryDark]}
@@ -388,8 +506,14 @@ export default function InterviewerScreen({ navigation }) {
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
-            <Ionicons name="videocam" size={18} color={COLORS.white} />
-            <Text style={styles.ctaPrimaryText}>Start Interview</Text>
+            {loadingStart ? (
+              <ActivityIndicator size="small" color={COLORS.white} />
+            ) : (
+              <>
+                <Ionicons name="videocam" size={18} color={COLORS.white} />
+                <Text style={styles.ctaPrimaryText}>Start Interview</Text>
+              </>
+            )}
           </LinearGradient>
         </TouchableOpacity>
       </View>
@@ -400,7 +524,9 @@ export default function InterviewerScreen({ navigation }) {
           <View style={styles.sectionTitleAccentBar} />
           <Text style={styles.sectionTitle}>Past Interviews</Text>
         </View>
-        <Text style={styles.sectionCount}>{filteredInterviews.length} session{filteredInterviews.length !== 1 ? 's' : ''}</Text>
+        <Text style={styles.sectionCount}>
+          {filteredInterviews.length} session{filteredInterviews.length !== 1 ? 's' : ''}
+        </Text>
       </View>
 
       {/* ── Search Bar ─────────────────────────────────────── */}
@@ -409,7 +535,7 @@ export default function InterviewerScreen({ navigation }) {
           <Ionicons name="search-outline" size={18} color={COLORS.textTertiary} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search by role, company or skill..."
+            placeholder="Search by role, company or skill…"
             placeholderTextColor={COLORS.textTertiary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -430,10 +556,10 @@ export default function InterviewerScreen({ navigation }) {
           style={styles.filterButton}
           onPress={() => setSortBy(sortBy === 'newest' ? 'oldest' : 'newest')}
         >
-          <Ionicons 
-            name={sortBy === 'newest' ? 'arrow-down' : 'arrow-up'} 
-            size={16} 
-            color={COLORS.primary} 
+          <Ionicons
+            name={sortBy === 'newest' ? 'arrow-down' : 'arrow-up'}
+            size={16}
+            color={COLORS.primary}
           />
           <Text style={styles.filterButtonText}>
             {sortBy === 'newest' ? 'Newest' : 'Oldest'}
@@ -484,7 +610,7 @@ export default function InterviewerScreen({ navigation }) {
             >
               <Ionicons name="videocam-off-outline" size={40} color={COLORS.primaryLight} />
             </LinearGradient>
-            <Text style={styles.emptyStateTitle}>No sessions found</Text>
+            <Text style={styles.emptyStateTitle}>No sessions yet</Text>
             <Text style={styles.emptyStateSubtext}>
               {searchQuery.length > 0
                 ? `No results for "${searchQuery}"`
@@ -492,7 +618,7 @@ export default function InterviewerScreen({ navigation }) {
             </Text>
             <TouchableOpacity
               style={styles.emptyStateCta}
-              onPress={() => showComingSoon('AI Interview session')}
+              onPress={handleStartInterview}
             >
               <Text style={styles.emptyStateCtaText}>Start First Interview</Text>
             </TouchableOpacity>
@@ -506,7 +632,7 @@ export default function InterviewerScreen({ navigation }) {
   );
 }
 
-// ─── Styles ────────────────────────────────────────────────────────────────────
+// ─── Styles (unchanged from original) ─────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -541,7 +667,9 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     marginBottom: 8,
   },
-
+  headerTitleBold: {
+    fontWeight: '700',
+  },
   headerTitleAccent: {
     color: COLORS.primary,
     fontWeight: '800',
@@ -572,48 +700,41 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  // ── Stats Strip ─────────────────────────────────────────
-  statsStrip: {
+  // ── Tip Banner ───────────────────────────────────────────
+  tipBanner: {
     flexDirection: 'row',
     marginHorizontal: 20,
-    marginTop: 14,
+    marginTop: 8,
     marginBottom: 16,
-    backgroundColor: COLORS.white,
     borderRadius: 16,
-    paddingVertical: 14,
-    ...Platform.select({
-      ios: {
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 12,
-      },
-      android: { elevation: 3 },
-    }),
+    padding: 16,
+    gap: 12,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: `${COLORS.primary}18`,
   },
-  statItem: {
-    flex: 1,
+  tipBannerIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: `${COLORS.primary}15`,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  statValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: COLORS.primary,
-    letterSpacing: -0.5,
+  tipBannerContent: {
+    flex: 1,
   },
-  statLabel: {
-    fontSize: 11,
-    color: COLORS.textTertiary,
-    fontWeight: '600',
-    marginTop: 2,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
+  tipBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+    marginBottom: 4,
   },
-  statDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: COLORS.border,
-    alignSelf: 'center',
+  tipBannerText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    lineHeight: 18,
+    fontWeight: '500',
   },
 
   // ── CTA Buttons ─────────────────────────────────────────
@@ -679,10 +800,6 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     letterSpacing: 0.1,
   },
-
-  // ── Scroll ───────────────────────────────────────────────
-  scrollView: { flex: 1 },
-  scrollContent: { paddingTop: 2 },
 
   // ── Section Header ───────────────────────────────────────
   sectionHeader: {
@@ -785,21 +902,25 @@ const styles = StyleSheet.create({
     transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }],
   },
 
+  // ── Scroll ───────────────────────────────────────────────
+  scrollView: { flex: 1 },
+  scrollContent: { paddingTop: 2 },
+
   // ── Interview Card ───────────────────────────────────────
-card: {
+  card: {
     marginHorizontal: 20,
     marginBottom: 16,
     backgroundColor: COLORS.white,
     borderRadius: 18,
     ...Platform.select({
       ios: {
-        shadowColor: COLORS.black, 
-        shadowOffset: { width: 0, height: 3 }, // Slight vertical drop
-        shadowOpacity: 0.12, // Medium visibility
-        shadowRadius: 6, 
+        shadowColor: COLORS.black,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.12,
+        shadowRadius: 6,
       },
-      android: { 
-        elevation: 4, 
+      android: {
+        elevation: 4,
       },
     }),
   },
@@ -918,7 +1039,6 @@ card: {
     lineHeight: 17,
     fontWeight: '500',
   },
-  // Score Ring
   scoreRing: {
     width: 52,
     height: 52,
@@ -943,7 +1063,6 @@ card: {
     fontWeight: '700',
     color: COLORS.textTertiary,
   },
-  // Card Footer
   cardFooter: {
     flexDirection: 'row',
     borderTopWidth: 1,
@@ -1007,40 +1126,5 @@ card: {
     color: COLORS.white,
     fontWeight: '700',
     fontSize: 14,
-  },
-
-  // ── Tip Banner ───────────────────────────────────────────
-  tipBanner: {
-    flexDirection: 'row',
-    marginHorizontal: 20,
-    marginTop: 8,
-    marginBottom: 16,
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-    alignItems: 'flex-start',
-    borderWidth: 1,
-    borderColor: `${COLORS.primary}18`,
-  },
-  tipBannerIconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: `${COLORS.primary}15`,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tipBannerContent: { flex: 1 },
-  tipBannerTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.primaryDark,
-    marginBottom: 4,
-  },
-  tipBannerText: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
-    fontWeight: '500',
   },
 });
