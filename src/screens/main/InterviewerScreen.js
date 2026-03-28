@@ -96,7 +96,7 @@ const MOCK_INTERVIEWS = [
   },
 ];
 
-const SORT_OPTIONS = ['Newest', 'Highest Score', 'Longest', 'Favorites'];
+
 
 // ─── Coming Soon Alert ─────────────────────────────────────────────────────────
 const showComingSoon = (feature = 'This feature') => {
@@ -134,7 +134,7 @@ const ScoreRing = ({ score, color }) => {
 };
 
 // ─── Interview Card Component ──────────────────────────────────────────────────
-const InterviewCard = ({ item, onToggleFavorite }) => {
+const InterviewCard = ({ item, onToggleFavorite, onDelete }) => {
   const isIncomplete = item.status === 'incomplete';
 
   return (
@@ -242,10 +242,10 @@ const InterviewCard = ({ item, onToggleFavorite }) => {
         <View style={styles.footerSep} />
         <TouchableOpacity
           style={styles.footerBtn}
-          onPress={() => showComingSoon('Share interview summary')}
+          onPress={() => onDelete(item.id)}
         >
-          <Ionicons name="share-outline" size={15} color={COLORS.primary} />
-          <Text style={styles.footerBtnText}>Share</Text>
+          <Ionicons name="trash-outline" size={15} color={COLORS.error} />
+          <Text style={[styles.footerBtnText, { color: COLORS.error }]}>Delete</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -255,7 +255,7 @@ const InterviewCard = ({ item, onToggleFavorite }) => {
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function InterviewerScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeSort, setActiveSort] = useState('Newest');
+  const [sortBy, setSortBy] = useState('newest');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [interviews, setInterviews] = useState(MOCK_INTERVIEWS);
 
@@ -267,21 +267,39 @@ export default function InterviewerScreen({ navigation }) {
     );
   };
 
-  const filteredInterviews = interviews
-    .filter((item) => {
+  const deleteInterview = (id) => {
+    Alert.alert(
+      'Delete Interview',
+      'Are you sure you want to delete this interview session? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setInterviews((prev) => prev.filter((item) => item.id !== id));
+          },
+        },
+      ]
+    );
+  };
+
+  const filteredInterviews = (() => {
+    let filtered = interviews.filter((item) => {
       const matchesSearch =
         item.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
       const matchesFav = favoritesOnly ? item.isFavorite : true;
       return matchesSearch && matchesFav;
-    })
-    .sort((a, b) => {
-      if (activeSort === 'Highest Score') return (b.score || 0) - (a.score || 0);
-      if (activeSort === 'Longest') return (parseInt(b.duration) || 0) - (parseInt(a.duration) || 0);
-      if (activeSort === 'Favorites') return (b.isFavorite ? 1 : 0) - (a.isFavorite ? 1 : 0);
-      return 0; // Newest — keep original order
     });
+    
+    if (sortBy === 'oldest') {
+      filtered = filtered.reverse();
+    }
+    
+    return filtered;
+  })();
 
   const completedCount = interviews.filter((i) => i.status === 'completed').length;
   const avgScore = Math.round(
@@ -325,25 +343,21 @@ export default function InterviewerScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* ── Stats Strip ──────────────────────────────────────── */}
-      <View style={styles.statsStrip}>
-        <View style={styles.statItem}>
-          <Text style={styles.statValue}>{completedCount}</Text>
-          <Text style={styles.statLabel}>Sessions</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: COLORS.success }]}>{avgScore}%</Text>
-          <Text style={styles.statLabel}>Avg Score</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: COLORS.gold }]}>
-            {interviews.filter((i) => i.isFavorite).length}
-          </Text>
-          <Text style={styles.statLabel}>Favourites</Text>
-        </View>
-      </View>
+        {/* ── Tips Banner ─────────────────────────────────────── */}
+        <LinearGradient
+          colors={['rgba(139,92,246,0.08)', 'rgba(167,139,250,0.04)']}
+          style={styles.tipBanner}
+        >
+          <View style={styles.tipBannerIconWrapper}>
+            <Ionicons name="bulb" size={22} color={COLORS.primary} />
+          </View>
+          <View style={styles.tipBannerContent}>
+            <Text style={styles.tipBannerTitle}>Pro Tip</Text>
+            <Text style={styles.tipBannerText}>
+              Complete your "About Me" profile so the AI can tailor every mock interview to your specific disability, role, and experience level.
+            </Text>
+          </View>
+        </LinearGradient>
 
       {/* ── CTA Buttons ──────────────────────────────────────── */}
       <View style={styles.ctaRow}>
@@ -380,91 +394,78 @@ export default function InterviewerScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
+      {/* ── Section: Past Interviews ────────────────────────── */}
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionTitleRow}>
+          <View style={styles.sectionTitleAccentBar} />
+          <Text style={styles.sectionTitle}>Past Interviews</Text>
+        </View>
+        <Text style={styles.sectionCount}>{filteredInterviews.length} session{filteredInterviews.length !== 1 ? 's' : ''}</Text>
+      </View>
+
+      {/* ── Search Bar ─────────────────────────────────────── */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchContainer}>
+          <Ionicons name="search-outline" size={18} color={COLORS.textTertiary} style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search by role, company or skill..."
+            placeholderTextColor={COLORS.textTertiary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClear}>
+              <Ionicons name="close-circle" size={16} color={COLORS.textTertiary} />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* ── Sort + Favourites Row ───────────────────────────── */}
+      <View style={styles.filterRow}>
+        {/* Sort Button */}
+        <TouchableOpacity
+          style={styles.filterButton}
+          onPress={() => setSortBy(sortBy === 'newest' ? 'oldest' : 'newest')}
+        >
+          <Ionicons 
+            name={sortBy === 'newest' ? 'arrow-down' : 'arrow-up'} 
+            size={16} 
+            color={COLORS.primary} 
+          />
+          <Text style={styles.filterButtonText}>
+            {sortBy === 'newest' ? 'Newest' : 'Oldest'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Spacer */}
+        <View style={{ flex: 1 }} />
+
+        {/* Favourites Switch */}
+        <View style={styles.favToggle}>
+          <Ionicons
+            name="star"
+            size={14}
+            color={favoritesOnly ? COLORS.gold : COLORS.textTertiary}
+          />
+          <Switch
+            value={favoritesOnly}
+            onValueChange={setFavoritesOnly}
+            trackColor={{ false: COLORS.border, true: `${COLORS.gold}55` }}
+            thumbColor={favoritesOnly ? COLORS.gold : COLORS.textTertiary}
+            style={styles.favSwitch}
+          />
+        </View>
+      </View>
+
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* ── Section: Past Interviews ────────────────────────── */}
-        <View style={styles.sectionHeader}>
-          <View style={styles.sectionTitleRow}>
-            <View style={styles.sectionTitleAccentBar} />
-            <Text style={styles.sectionTitle}>Past Interviews</Text>
-          </View>
-          <Text style={styles.sectionCount}>{filteredInterviews.length} session{filteredInterviews.length !== 1 ? 's' : ''}</Text>
-        </View>
-
-        {/* ── Search Bar ─────────────────────────────────────── */}
-        <View style={styles.searchRow}>
-          <View style={styles.searchContainer}>
-            <Ionicons name="search-outline" size={18} color={COLORS.textTertiary} style={styles.searchIcon} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search by role, company or skill..."
-              placeholderTextColor={COLORS.textTertiary}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              returnKeyType="search"
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClear}>
-                <Ionicons name="close-circle" size={16} color={COLORS.textTertiary} />
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-
-        {/* ── Sort + Favourites Row ───────────────────────────── */}
-        <View style={styles.filterRow}>
-          {/* Sort chips */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.sortScrollView}
-            contentContainerStyle={styles.sortScrollContent}
-          >
-            {SORT_OPTIONS.map((option) => (
-              <TouchableOpacity
-                key={option}
-                style={[
-                  styles.sortChip,
-                  activeSort === option && styles.sortChipActive,
-                ]}
-                onPress={() => setActiveSort(option)}
-              >
-                {activeSort === option && (
-                  <Ionicons name="checkmark" size={12} color={COLORS.white} style={{ marginRight: 3 }} />
-                )}
-                <Text
-                  style={[
-                    styles.sortChipText,
-                    activeSort === option && styles.sortChipTextActive,
-                  ]}
-                >
-                  {option}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Favourites Switch */}
-          <View style={styles.favToggle}>
-            <Ionicons
-              name="star"
-              size={14}
-              color={favoritesOnly ? COLORS.gold : COLORS.textTertiary}
-            />
-            <Switch
-              value={favoritesOnly}
-              onValueChange={setFavoritesOnly}
-              trackColor={{ false: COLORS.border, true: `${COLORS.gold}55` }}
-              thumbColor={favoritesOnly ? COLORS.gold : COLORS.textTertiary}
-              style={styles.favSwitch}
-            />
-          </View>
-        </View>
-
         {/* ── Interview Cards ─────────────────────────────────── */}
         {filteredInterviews.length > 0 ? (
           filteredInterviews.map((item) => (
@@ -472,6 +473,7 @@ export default function InterviewerScreen({ navigation }) {
               key={item.id}
               item={item}
               onToggleFavorite={toggleFavorite}
+              onDelete={deleteInterview}
             />
           ))
         ) : (
@@ -496,22 +498,6 @@ export default function InterviewerScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         )}
-
-        {/* ── Tips Banner ─────────────────────────────────────── */}
-        <LinearGradient
-          colors={['rgba(139,92,246,0.08)', 'rgba(167,139,250,0.04)']}
-          style={styles.tipBanner}
-        >
-          <View style={styles.tipBannerIconWrapper}>
-            <Ionicons name="bulb" size={22} color={COLORS.primary} />
-          </View>
-          <View style={styles.tipBannerContent}>
-            <Text style={styles.tipBannerTitle}>Pro Tip</Text>
-            <Text style={styles.tipBannerText}>
-              Complete your "About Me" profile so the AI can tailor every mock interview to your specific disability, role, and experience level.
-            </Text>
-          </View>
-        </LinearGradient>
 
         {/* Bottom spacing for tab bar */}
         <View style={{ height: 110 }} />
@@ -550,16 +536,12 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: '700',
-    letterSpacing: -0.5,
-    lineHeight: 34,
     color: COLORS.textPrimary,
+    marginBottom: 8,
   },
-  headerTitleBold: {
-    color: COLORS.textPrimary,
-    fontWeight: '800',
-  },
+
   headerTitleAccent: {
     color: COLORS.primary,
     fontWeight: '800',
@@ -777,9 +759,7 @@ const styles = StyleSheet.create({
     paddingLeft: 20,
     marginBottom: 16,
   },
-  sortScrollView: { flex: 1 },
-  sortScrollContent: { gap: 8, paddingRight: 12 },
-  sortChip: {
+  filterButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
@@ -788,18 +768,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderWidth: 1.5,
     borderColor: COLORS.border,
+    gap: 4,
   },
-  sortChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  sortChipText: {
+  filterButtonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  sortChipTextActive: {
-    color: COLORS.white,
+    color: COLORS.primary,
   },
   favToggle: {
     flexDirection: 'row',
@@ -812,20 +786,21 @@ const styles = StyleSheet.create({
   },
 
   // ── Interview Card ───────────────────────────────────────
-  card: {
+card: {
     marginHorizontal: 20,
-    marginBottom: 14,
+    marginBottom: 16,
     backgroundColor: COLORS.white,
     borderRadius: 18,
-    overflow: 'hidden',
     ...Platform.select({
       ios: {
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 12,
+        shadowColor: COLORS.black, 
+        shadowOffset: { width: 0, height: 3 }, // Slight vertical drop
+        shadowOpacity: 0.12, // Medium visibility
+        shadowRadius: 6, 
       },
-      android: { elevation: 3 },
+      android: { 
+        elevation: 4, 
+      },
     }),
   },
   cardHeader: {
@@ -951,8 +926,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
-    flexDirection: 'row',
-    alignItems: 'baseline',
+    flexDirection: 'column',
   },
   scoreRingValue: {
     fontSize: 16,
@@ -962,7 +936,7 @@ const styles = StyleSheet.create({
   scoreRingLabel: {
     fontSize: 9,
     fontWeight: '700',
-    marginBottom: 1,
+    marginTop: -2,
   },
   scoreRingNA: {
     fontSize: 18,
@@ -1039,8 +1013,8 @@ const styles = StyleSheet.create({
   tipBanner: {
     flexDirection: 'row',
     marginHorizontal: 20,
-    marginTop: 4,
-    marginBottom: 8,
+    marginTop: 8,
+    marginBottom: 16,
     borderRadius: 16,
     padding: 16,
     gap: 12,
