@@ -7,12 +7,13 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Platform, StatusBar, ActivityIndicator,
   Linking, Alert, Animated, Dimensions, Modal,
-  TextInput, KeyboardAvoidingView,
+  TextInput, KeyboardAvoidingView, Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, firestore } from '../../../firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../../constants/colors';
 import {
   fetchJobsForUser,
@@ -229,6 +230,7 @@ const JobCard = ({ job }) => {
 // ─── Main HomeScreen ──────────────────────────────────────────────────────────
 export default function HomeScreen({ navigation }) {
   const [userName,      setUserName]      = useState('');
+  const [userPhoto,     setUserPhoto]     = useState(null);
   const [userSkills,    setUserSkills]    = useState([]);
   const [showSkillsModal,setShowSkillsModal] = useState(false);
   const [trends,        setTrends]        = useState(
@@ -256,6 +258,14 @@ export default function HomeScreen({ navigation }) {
       // Get display name
       const displayName = auth.currentUser?.displayName ?? '';
       setUserName(displayName.split(' ')[0] || 'there');
+
+      // Load profile picture from user-scoped local storage
+      if (uid) {
+        const localPhoto = await AsyncStorage.getItem(`@visionally_profile_picture_${uid}`);
+        setUserPhoto(localPhoto || auth.currentUser?.photoURL || null);
+      } else {
+        setUserPhoto(auth.currentUser?.photoURL || null);
+      }
 
       if (!uid) return;
 
@@ -347,9 +357,21 @@ export default function HomeScreen({ navigation }) {
               <Text style={styles.heroGreeting}>{greeting},</Text>
               <Text style={styles.heroName}>{userName} 👋</Text>
             </View>
-            <TouchableOpacity style={styles.bellBtn} activeOpacity={0.8}>
-              <Ionicons name="notifications-outline" size={22} color={COLORS.white} />
-              <View style={styles.bellDot} />
+            <TouchableOpacity
+              style={styles.profileBtn}
+              onPress={() => navigation.getParent()?.jumpTo('profile')}
+              activeOpacity={0.8}
+            >
+              {userPhoto ? (
+                <Image
+                  source={{ uri: userPhoto }}
+                  style={styles.profileImage}
+                />
+              ) : (
+                <Text style={styles.profileInitials}>
+                  {userName ? userName.charAt(0).toUpperCase() : 'U'}
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
           <Text style={styles.heroSub}>
@@ -421,9 +443,20 @@ export default function HomeScreen({ navigation }) {
           </View>
 
           {jobsLoading ? (
-            <View style={styles.jobsLoading}>
-              <ActivityIndicator size="large" color={COLORS.primary} />
-              <Text style={styles.jobsLoadingText}>Finding jobs for you…</Text>
+            <View style={styles.jobsList}>
+              {Array(3).fill(0).map((_, i) => (
+                <View key={i} style={styles.jobCardSkeleton}>
+                  <View style={styles.skeletonRow}>
+                    <View style={[styles.skeletonBox, { width: 42, height: 42, borderRadius: 12 }]} />
+                    <View style={{ flex: 1, gap: 8 }}>
+                      <View style={[styles.skeletonBox, { height: 14, width: '70%', borderRadius: 6 }]} />
+                      <View style={[styles.skeletonBox, { height: 11, width: '45%', borderRadius: 6 }]} />
+                    </View>
+                  </View>
+                  <View style={[styles.skeletonBox, { height: 11, width: '90%', borderRadius: 6, marginTop: 12 }]} />
+                  <View style={[styles.skeletonBox, { height: 11, width: '60%', borderRadius: 6, marginTop: 6 }]} />
+                </View>
+              ))}
             </View>
           ) : jobs.length === 0 ? (
             <View style={styles.noJobs}>
@@ -538,6 +571,19 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
   },
+  profileBtn: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: COLORS.white,
+    overflow: 'hidden',
+  },
+  profileImage: {
+    width: '100%', height: '100%', borderRadius: 26,
+  },
+  profileInitials: {
+    fontSize: 20, fontWeight: '800', color: COLORS.white,
+  },
   bellDot: {
     position: 'absolute', top: 9, right: 9,
     width: 8, height: 8, borderRadius: 4,
@@ -552,7 +598,7 @@ const styles = StyleSheet.create({
   contentSheet: {
     flex: 1,
     backgroundColor: COLORS.backgroundSecondary,
-    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     marginTop: -20,
     overflow: 'hidden',
   },
@@ -592,7 +638,7 @@ const styles = StyleSheet.create({
       android: { elevation: 2 },
     }),
   },
-  trendCardSkeleton: { borderTopColor: COLORS.border, opacity: 0.4, height: 110 },
+  trendCardSkeleton: { borderTopColor: '#CBD5E1', backgroundColor: '#F1F5F9', opacity: 0.8, height: 110 },
   trendIconWrap: {
     width: 34, height: 34, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center', marginBottom: 10,
@@ -605,6 +651,18 @@ const styles = StyleSheet.create({
   // Jobs loading/empty
   jobsLoading: { alignItems: 'center', paddingVertical: 40, gap: 12 },
   jobsLoadingText: { color: COLORS.textSecondary, fontSize: 14, fontWeight: '500' },
+
+  // Skeleton
+  jobCardSkeleton: {
+    backgroundColor: COLORS.white, borderRadius: 18, padding: 16,
+    borderWidth: 1, borderColor: COLORS.borderLight,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.05, shadowRadius:8 },
+      android: { elevation: 2 },
+    }),
+  },
+  skeletonRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  skeletonBox: { backgroundColor: '#E2E8F0' },
   noJobs: { alignItems: 'center', paddingVertical: 36, paddingHorizontal: 32, gap: 8 },
   noJobsText: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
   noJobsSub:  { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center' },

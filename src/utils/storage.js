@@ -16,7 +16,7 @@ export const StorageService = {
       await AsyncStorage.setItem(STORAGE_KEYS.USER_ID, userId);
       return true;
     } catch (error) {
-      console.error('Error saving user session:', error);
+      console.log('Error saving user session:', error);
       return false;
     }
   },
@@ -26,7 +26,7 @@ export const StorageService = {
       const session = await AsyncStorage.getItem(STORAGE_KEYS.USER_SESSION);
       return session ? JSON.parse(session) : null;
     } catch (error) {
-      console.error('Error getting user session:', error);
+      console.log('Error getting user session:', error);
       return null;
     }
   },
@@ -37,7 +37,7 @@ export const StorageService = {
       await AsyncStorage.removeItem(STORAGE_KEYS.USER_ID);
       return true;
     } catch (error) {
-      console.error('Error clearing user session:', error);
+      console.log('Error clearing user session:', error);
       return false;
     }
   },
@@ -47,7 +47,7 @@ export const StorageService = {
       const session = await AsyncStorage.getItem(STORAGE_KEYS.USER_SESSION);
       return session !== null;
     } catch (error) {
-      console.error('Error checking login status:', error);
+      console.log('Error checking login status:', error);
       return false;
     }
   },
@@ -58,7 +58,7 @@ export const StorageService = {
       await AsyncStorage.setItem(STORAGE_KEYS.PROFILE_PICTURE, imageUri);
       return true;
     } catch (error) {
-      console.error('Error saving profile picture:', error);
+      console.log('Error saving profile picture:', error);
       return false;
     }
   },
@@ -67,7 +67,7 @@ export const StorageService = {
     try {
       return await AsyncStorage.getItem(STORAGE_KEYS.PROFILE_PICTURE);
     } catch (error) {
-      console.error('Error getting profile picture:', error);
+      console.log('Error getting profile picture:', error);
       return null;
     }
   },
@@ -77,7 +77,7 @@ export const StorageService = {
       await AsyncStorage.removeItem(STORAGE_KEYS.PROFILE_PICTURE);
       return true;
     } catch (error) {
-      console.error('Error removing profile picture:', error);
+      console.log('Error removing profile picture:', error);
       return false;
     }
   },
@@ -88,7 +88,7 @@ export const StorageService = {
       await AsyncStorage.setItem(STORAGE_KEYS.APP_SETTINGS, JSON.stringify(settings));
       return true;
     } catch (error) {
-      console.error('Error saving app settings:', error);
+      console.log('Error saving app settings:', error);
       return false;
     }
   },
@@ -106,7 +106,7 @@ export const StorageService = {
         autoLock: true,
       };
     } catch (error) {
-      console.error('Error getting app settings:', error);
+      console.log('Error getting app settings:', error);
       return null;
     }
   },
@@ -116,7 +116,7 @@ export const StorageService = {
     try {
       return await AsyncStorage.getAllKeys();
     } catch (error) {
-      console.error('Error getting all keys:', error);
+      console.log('Error getting all keys:', error);
       return [];
     }
   },

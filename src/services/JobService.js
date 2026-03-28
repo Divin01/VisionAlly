@@ -154,7 +154,7 @@ export async function fetchJobsForUser(skills = [], page = 1) {
       page,
     };
   } catch (err) {
-    console.error('[JobService] fetchJobsForUser error:', err);
+    console.log('[JobService] fetchJobsForUser error:', err);
     return { jobs: [], total: 0, page };
   }
 }
@@ -177,7 +177,7 @@ export async function fetchJobsByCategory(categoryTag, page = 1) {
       page,
     };
   } catch (err) {
-    console.error('[JobService] fetchJobsByCategory error:', err);
+    console.log('[JobService] fetchJobsByCategory error:', err);
     return { jobs: [], total: 0, page };
   }
 }
@@ -227,7 +227,7 @@ export async function fetchMarketTrends() {
       trendPct:    median > 0 ? Math.round(((t.count - median) / median) * 100) : 0,
     }));
   } catch (err) {
-    console.error('[JobService] fetchMarketTrends error:', err);
+    console.log('[JobService] fetchMarketTrends error:', err);
     return topCategories.map(c => ({ ...c, count: 0, trend: 'stable', trendPct: 0 }));
   }
 }
@@ -253,7 +253,7 @@ export async function searchJobs(query = '', category = '', page = 1) {
       page,
     };
   } catch (err) {
-    console.error('[JobService] searchJobs error:', err);
+    console.log('[JobService] searchJobs error:', err);
     return { jobs: [], total: 0, page };
   }
 }

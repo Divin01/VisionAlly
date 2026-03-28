@@ -136,7 +136,7 @@ export const InterviewStorageService = {
 
       return id;
     } catch (err) {
-      console.error('[InterviewStorage] saveSession error:', err);
+      console.log('[InterviewStorage] saveSession error:', err);
       throw err;
     }
   },
@@ -156,7 +156,7 @@ export const InterviewStorageService = {
       );
       return sessions.filter(Boolean);
     } catch (err) {
-      console.error('[InterviewStorage] getAllSessions error:', err);
+      console.log('[InterviewStorage] getAllSessions error:', err);
       return [];
     }
   },
@@ -182,7 +182,7 @@ export const InterviewStorageService = {
       await AsyncStorage.setItem(KEYS.SESSION_PREFIX + id, JSON.stringify(session));
       return session.isFavorite;
     } catch (err) {
-      console.error('[InterviewStorage] toggleFavorite error:', err);
+      console.log('[InterviewStorage] toggleFavorite error:', err);
     }
   },
 
@@ -196,7 +196,7 @@ export const InterviewStorageService = {
         await AsyncStorage.setItem(KEYS.SESSIONS_LIST, JSON.stringify(ids));
       }
     } catch (err) {
-      console.error('[InterviewStorage] deleteSession error:', err);
+      console.log('[InterviewStorage] deleteSession error:', err);
     }
   },
 
@@ -226,7 +226,7 @@ export const InterviewStorageService = {
       }
       await AsyncStorage.removeItem(KEYS.SESSIONS_LIST);
     } catch (err) {
-      console.error('[InterviewStorage] clearAll error:', err);
+      console.log('[InterviewStorage] clearAll error:', err);
     }
   },
 };

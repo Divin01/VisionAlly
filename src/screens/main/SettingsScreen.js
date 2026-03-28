@@ -23,7 +23,7 @@ import { signOut, updatePassword } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StorageService } from '../../utils/storage';
 
-const PROFILE_PICTURE_KEY = '@visionally_profile_picture';
+const PROFILE_PICTURE_KEY = (uid) => `@visionally_profile_picture_${uid}`;
 const LANGUAGES = [
   { code: 'en', name: 'English', flag: '🇬🇧' },
   { code: 'af', name: 'Afrikaans', flag: '🇿🇦' },
@@ -87,13 +87,13 @@ export default function SettingsScreen({ navigation }) {
           setEmail(user.email || '');
         }
 
-        const savedPicture = await AsyncStorage.getItem(PROFILE_PICTURE_KEY);
+        const savedPicture = await AsyncStorage.getItem(PROFILE_PICTURE_KEY(user.uid));
         if (savedPicture) {
           setProfilePicture(savedPicture);
         }
       }
     } catch (error) {
-      console.error('Error loading user data:', error);
+      console.log('Error loading user data:', error);
     } finally {
       setLoading(false);
     }
@@ -114,7 +114,7 @@ export default function SettingsScreen({ navigation }) {
         setJobRecommendationFrequency(settings.jobRecommendationFrequency ?? 'daily');
       }
     } catch (error) {
-      console.error('Error loading settings:', error);
+      console.log('Error loading settings:', error);
     }
   };
 
@@ -133,7 +133,7 @@ export default function SettingsScreen({ navigation }) {
       };
       await AsyncStorage.setItem('@visionally_app_settings', JSON.stringify(settings));
     } catch (error) {
-      console.error('Error saving settings:', error);
+      console.log('Error saving settings:', error);
     }
   };
 
@@ -156,11 +156,11 @@ export default function SettingsScreen({ navigation }) {
       if (!result.canceled && result.assets[0]) {
         const imageUri = result.assets[0].uri;
         setProfilePicture(imageUri);
-        await AsyncStorage.setItem(PROFILE_PICTURE_KEY, imageUri);
+        await AsyncStorage.setItem(PROFILE_PICTURE_KEY(auth.currentUser?.uid ?? 'guest'), imageUri);
         Alert.alert('Success', 'Profile picture updated!');
       }
     } catch (error) {
-      console.error('Error picking image:', error);
+      console.log('Error picking image:', error);
       Alert.alert('Error', 'Failed to update profile picture');
     }
   };
@@ -188,7 +188,7 @@ export default function SettingsScreen({ navigation }) {
         Alert.alert('Success', 'Profile updated successfully!');
       }
     } catch (error) {
-      console.error('Error updating profile:', error);
+      console.log('Error updating profile:', error);
       Alert.alert('Error', 'Failed to update profile');
     } finally {
       setSaving(false);
@@ -223,7 +223,7 @@ export default function SettingsScreen({ navigation }) {
       
       Alert.alert('Success', 'Password changed successfully!');
     } catch (error) {
-      console.error('Error changing password:', error);
+      console.log('Error changing password:', error);
       if (error.code === 'auth/requires-recent-login') {
         Alert.alert('Error', 'Please log out and log in again to change your password');
       } else {
@@ -248,7 +248,7 @@ export default function SettingsScreen({ navigation }) {
               await signOut(auth);
               await StorageService.clearUserSession();
             } catch (error) {
-              console.error('Error logging out:', error);
+              console.log('Error logging out:', error);
               Alert.alert('Error', 'Failed to logout');
             }
           },
@@ -932,7 +932,7 @@ const styles = StyleSheet.create({
   contentSheet: {
     flex: 1,
     backgroundColor: COLORS.backgroundSecondary,
-    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     marginTop: -20,
     overflow: 'hidden',
   },

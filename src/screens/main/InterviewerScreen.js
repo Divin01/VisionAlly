@@ -290,7 +290,7 @@ export default function InterviewerScreen({ navigation, route }) {
       await continueStartFlow(profile);
 
     } catch (err) {
-      console.error('[InterviewerScreen] handleStartInterview error:', err);
+      console.log('[InterviewerScreen] handleStartInterview error:', err);
       Alert.alert('Error', 'Something went wrong. Please try again.');
     } finally {
       setLoadingStart(false);
@@ -395,7 +395,7 @@ export default function InterviewerScreen({ navigation, route }) {
 
       launchInterviewRoom(profile, jobText, jobRole, jobCompany);
     } catch (err) {
-      console.error('[InterviewerScreen] analyse error:', err);
+      console.log('[InterviewerScreen] analyse error:', err);
       Alert.alert(
         'Analysis Failed',
         'Could not read the document. Starting without it — you can still have a great practice session!',
@@ -678,7 +678,7 @@ const styles = StyleSheet.create({
   contentSheet: {
     flex: 1,
     backgroundColor: '#FAFAFA',
-    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     marginTop: -20,
     overflow: 'hidden',
   },

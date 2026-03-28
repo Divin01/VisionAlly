@@ -165,7 +165,7 @@ export class GeminiLiveService {
     }
       if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_')) {
         const e = new Error('GEMINI_API_KEY not configured in config.js');
-        console.error('[GeminiLive]', e.message);
+        console.log('[GeminiLive]', e.message);
         if (this.onError) this.onError(e);
         reject(e);
         return;
@@ -210,7 +210,7 @@ this._ws.send(JSON.stringify({
       this._ws.onerror = (err) => {
         if (settled) return;
         settled = true;
-        console.error('[GeminiLive] WS error:', err);
+        console.log('[GeminiLive] WS error:', err);
         const e = new Error('WebSocket error — verify API key and internet connection');
         if (this.onError) this.onError(e);
         reject(e);
@@ -356,7 +356,7 @@ this._ws.send(JSON.stringify({
       });
       return uri;
     } catch (e) {
-      console.error('[GeminiLive] _flushToWav:', e);
+      console.log('[GeminiLive] _flushToWav:', e);
       return null;
     }
   }
@@ -364,7 +364,7 @@ this._ws.send(JSON.stringify({
   _send(payload) {
     if (this._ws?.readyState === WebSocket.OPEN) {
       try { this._ws.send(JSON.stringify(payload)); } catch (e) {
-        console.error('[GeminiLive] _send error:', e);
+        console.log('[GeminiLive] _send error:', e);
       }
     }
   }

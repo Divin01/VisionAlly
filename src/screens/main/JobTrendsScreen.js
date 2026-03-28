@@ -411,7 +411,7 @@ const styles = StyleSheet.create({
   contentSheet: {
     flex: 1,
     backgroundColor: COLORS.backgroundSecondary,
-    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     marginTop: -20,
     overflow: 'hidden',
   },

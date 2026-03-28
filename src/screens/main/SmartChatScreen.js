@@ -51,7 +51,7 @@ export default function SmartChatScreen({ navigation }) {
       console.log(`Loaded ${data.length} conversations`);
       setConversations(data);
     } catch (error) {
-      console.error('Error loading conversations:', error);
+      console.log('Error loading conversations:', error);
       Alert.alert('Error', 'Failed to load conversations');
     }
   };
@@ -358,7 +358,7 @@ const styles = StyleSheet.create({
   contentSheet: {
     flex: 1,
     backgroundColor: COLORS.backgroundSecondary,
-    borderTopLeftRadius: 28,
+    borderTopRightRadius: 30,
     marginTop: -20,
     overflow: 'hidden',
   },

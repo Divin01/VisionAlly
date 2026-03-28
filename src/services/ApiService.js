@@ -257,10 +257,7 @@ const ApiService = {
       };
 
     } catch (error) {
-      console.error('!!! ApiService Error !!!');
-      console.error('Error type:', error.name);
-      console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
+      console.log('[ApiService] error:', error.name, error.message);
 
       const parsedError = parseError(error);
 

@@ -163,7 +163,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
         }
       });
     } catch (err) {
-      console.error('[Room] playAudio:', err);
+      console.log('[Room] playAudio:', err);
     }
   }, [stopPlayback, setRoomStateSynced]);
 
@@ -235,7 +235,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
         }
       }, 200);
     } catch (err) {
-      console.error('[Room] startMicCapture:', err);
+      console.log('[Room] startMicCapture:', err);
     }
   }, []);
 
@@ -300,7 +300,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
         status: completed ? 'completed' : 'incomplete',
       });
     } catch (e) {
-      console.error('[Room] saveSession:', e);
+      console.log('[Room] saveSession:', e);
     }
 
     // BUG 3 FIX: use navigate + goBack, not replace
@@ -329,7 +329,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
           playThroughEarpieceAndroid: false,
         });
       } catch (e) {
-        console.error('[Room] Audio.setAudioModeAsync:', e);
+        console.log('[Room] Audio.setAudioModeAsync:', e);
         Alert.alert('Audio Error', 'Could not configure audio. Please try again.');
         safeGoBack();
         return;
@@ -397,7 +397,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
 
       svc.onError = (err) => {
         if (cancelled) return;
-        console.error('[Room] Gemini error:', err);
+        console.log('[Room] Gemini error:', err);
         Alert.alert('AI Error', err.message || 'Connection failed. Check your API key and internet.');
         safeGoBack();
       };
@@ -408,7 +408,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
         if (!cancelled) sessionStartRef.current = Date.now();
       } catch (err) {
         if (!cancelled) {
-          console.error('[Room] connect failed:', err);
+          console.log('[Room] connect failed:', err);
           Alert.alert('Connection Failed', 'Could not reach the AI service. Check your Gemini API key.');
           safeGoBack();
         }
