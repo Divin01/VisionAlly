@@ -18,6 +18,7 @@ import { auth, firestore } from '../../../firebase';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  updateProfile,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { StorageService } from '../../utils/storage';
@@ -86,7 +87,10 @@ export default function LoginScreen({ navigation }) {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      await createUserDocument(user, { displayName: name });
+      // Set displayName on the Firebase Auth user object itself
+      await updateProfile(user, { displayName: name.trim() });
+
+      await createUserDocument(user, { displayName: name.trim() });
       await StorageService.saveUserSession(user.uid, user.email);
 
       Alert.alert('Success', 'Account created successfully!');

@@ -21,6 +21,7 @@ import {
   JOB_CATEGORIES,
 } from '../../services/JobService';
 import { InterviewStorageService } from '../../services/InterviewStorageService';
+import { UserProfileService } from '../../services/UserProfileService';
 
 const { width: W } = Dimensions.get('window');
 const JOB_CARD_W   = W - 48; // full-width minus padding
@@ -255,13 +256,15 @@ export default function HomeScreen({ navigation }) {
     (async () => {
       const uid = auth.currentUser?.uid;
 
-      // Get display name
-      const displayName = auth.currentUser?.displayName ?? '';
-      setUserName(displayName.split(' ')[0] || 'there');
+      // Get display name — try UserProfileService first (local cache), then auth
+      const profileData = await UserProfileService.getProfile();
+      const firstName = (profileData.displayName || auth.currentUser?.displayName || '')
+        .split(' ')[0] || 'there';
+      setUserName(firstName);
 
-      // Load profile picture from user-scoped local storage
+      // Load profile picture from UserProfileService (same key as HomeScreen)
       if (uid) {
-        const localPhoto = await AsyncStorage.getItem(`@visionally_profile_picture_${uid}`);
+        const localPhoto = await UserProfileService.getProfilePicture();
         setUserPhoto(localPhoto || auth.currentUser?.photoURL || null);
       } else {
         setUserPhoto(auth.currentUser?.photoURL || null);
@@ -270,27 +273,29 @@ export default function HomeScreen({ navigation }) {
       if (!uid) return;
 
       try {
-        // Try Firestore first
-        const snap    = await getDoc(doc(firestore, 'users', uid, 'profile', 'about_me'));
-        const profile = snap.exists() ? snap.data() : null;
-
-        if (profile?.skills?.length > 0) {
-          setUserSkills(profile.skills.filter(Boolean));
+        // Load skills from profile data (already loaded above)
+        if (profileData.skills?.length > 0) {
+          setUserSkills(profileData.skills.filter(Boolean));
         } else {
-          // Fall back to local cache
-          const cached = await InterviewStorageService.getCachedAboutMe();
-          if (cached?.skills?.length > 0) {
-            setUserSkills(cached.skills.filter(Boolean));
-          } else {
-            // First time / no skills → show prompt after short delay
-            setTimeout(() => setShowSkillsModal(true), 1200);
-          }
-        }
+          // Fall back to Firestore about_me
+          const snap    = await getDoc(doc(firestore, 'users', uid, 'profile', 'about_me'));
+          const profile = snap.exists() ? snap.data() : null;
 
-        if (displayName && !profile?.firstName) {
-          setUserName(displayName.split(' ')[0]);
-        } else if (profile?.firstName) {
-          setUserName(profile.firstName);
+          if (profile?.skills?.length > 0) {
+            setUserSkills(profile.skills.filter(Boolean));
+          } else {
+            const cached = await InterviewStorageService.getCachedAboutMe();
+            if (cached?.skills?.length > 0) {
+              setUserSkills(cached.skills.filter(Boolean));
+            } else {
+              setTimeout(() => setShowSkillsModal(true), 1200);
+            }
+          }
+
+          // Update name from about_me if profile data didn't have it
+          if (!profileData.displayName && profile?.firstName) {
+            setUserName(profile.firstName.split(' ')[0]);
+          }
         }
       } catch {
         const cached = await InterviewStorageService.getCachedAboutMe();
