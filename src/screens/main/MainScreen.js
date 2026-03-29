@@ -1,7 +1,7 @@
 // src/screens/main/MainScreen.js
 // Bottom tab navigation — updated to use real JobTrendsScreen
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   Platform, StatusBar, Dimensions,
@@ -31,6 +31,13 @@ const TABS = [
 export default function MainScreen({ navigation, route }) {
   const [activeTab, setActiveTab] = useState('home');
 
+  // Switch to interviewer tab when returning from interview room
+  useEffect(() => {
+    if (route?.params?.refreshInterviews) {
+      setActiveTab('interviewer');
+    }
+  }, [route?.params?.refreshInterviews]);
+
   const ActiveComponent = TABS.find(tab => tab.id === activeTab)?.component;
 
   // Allow child screens to jump to a tab programmatically
@@ -38,7 +45,7 @@ export default function MainScreen({ navigation, route }) {
 
   // Pass navigation + jumpTo to screens that need cross-tab navigation
   const getProps = (tabId) => {
-    const base = { navigation };
+    const base = { navigation, route };
     if (['home', 'chat', 'profile', 'interviewer', 'jobtrends'].includes(tabId)) {
       return {
         ...base,

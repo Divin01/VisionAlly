@@ -853,7 +853,7 @@ export default function InterviewerScreen({ navigation, route }) {
         onRequestClose={closeFeedback}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContainer, { maxHeight: '80%' }]}>
+          <View style={[styles.modalContainer, { maxHeight: '85%' }]}>
             {/* Header */}
             <View style={styles.modalHeader}>
               <View style={{ flex: 1 }}>
@@ -867,7 +867,11 @@ export default function InterviewerScreen({ navigation, route }) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={{ flexGrow: 0, flexShrink: 1 }}
+              contentContainerStyle={{ paddingBottom: 16 }}
+              showsVerticalScrollIndicator={false}
+            >
               {/* Score */}
               {feedbackSession?.feedbackReport?.score != null && (
                 <View style={styles.fbScoreRow}>

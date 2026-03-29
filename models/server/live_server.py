@@ -100,7 +100,7 @@ async def handle_client(client_ws):
             max_size=16 * 1024 * 1024,  # 16 MB for audio chunks
             close_timeout=5,
         )
-        print(f"[{_ts()}] ✅ Connected to Gemini")
+        print(f"[{_ts()}] Connected to Gemini")
 
         # 3. Send config
         await gemini_ws.send(json.dumps(gemini_config))
@@ -118,7 +118,7 @@ async def handle_client(client_ws):
             }))
             return
 
-        print(f"[{_ts()}] ✅ Gemini setupComplete")
+        print(f"[{_ts()}] Gemini setupComplete")
 
         # 5. Notify the client
         await client_ws.send(json.dumps({"setupComplete": True}))
