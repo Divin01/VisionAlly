@@ -116,7 +116,7 @@ export default function ChatConversationScreen({ route, navigation }) {
     const conversation = await ChatStorageService.getConversation(conversationId);
     if (conversation) {
       const updates = {
-        lastMessage: lastMessage?.text || 'Image/Audio message',
+        lastMessage: lastMessage?.text || lastMessage?.documentName || 'Image/Audio message',
         updatedAt: new Date().toISOString(),
         messageCount: messages.length + 1,
       };

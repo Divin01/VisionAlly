@@ -59,6 +59,21 @@ const MessageBubble = ({ message, isFirstInGroup, isLastInGroup }) => {
         {/* Image Message */}
         {renderImages()}
 
+        {/* Document Attachment */}
+        {message.documentName && (
+          <View style={styles.documentAttachment}>
+            <View style={styles.documentIcon}>
+              <Ionicons name="document-text" size={20} color={isUser ? COLORS.white : COLORS.primary} />
+            </View>
+            <Text
+              style={[styles.documentName, isUser ? styles.userText : styles.aiText]}
+              numberOfLines={1}
+            >
+              {message.documentName}
+            </Text>
+          </View>
+        )}
+
         {/* Audio Message */}
         {message.audioUri && (
           <AudioPlayer 
@@ -174,6 +189,28 @@ const styles = StyleSheet.create({
     width: 200,
     height: 150,
     borderRadius: 12,
+  },
+  documentAttachment: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(139,92,246,0.08)',
+    borderRadius: 10,
+    padding: 8,
+    marginBottom: 6,
+    gap: 8,
+  },
+  documentIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(139,92,246,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  documentName: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
   },
   messageText: {
     fontSize: 16,

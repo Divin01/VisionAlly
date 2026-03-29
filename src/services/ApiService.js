@@ -1,5 +1,5 @@
 const API_CONFIG = {
-  BASE_URL: 'http://192.168.0.167:5000',
+  BASE_URL: 'http://10.150.64.154:5000',
   TIMEOUT: 90000,
 };
 
@@ -97,6 +97,7 @@ const createChatFormData = (messageData, conversationId) => {
     hasImages: !!messageData.images,
     imageCount: messageData.images?.length || 0,
     hasAudio: !!messageData.audioUri,
+    hasDocument: !!messageData.documentUri,
     conversationId
   });
 
@@ -124,6 +125,21 @@ const createChatFormData = (messageData, conversationId) => {
     
     console.log('Appending image:', imageFile.name, 'Type:', imageFile.type);
     formData.append('image', imageFile);
+  }
+
+  // Handle document (PDF, etc.)
+  if (messageData.documentUri) {
+    const uriParts = messageData.documentUri.split('/');
+    const filename = uriParts[uriParts.length - 1];
+    
+    const documentFile = {
+      uri: messageData.documentUri,
+      type: messageData.documentMimeType || 'application/pdf',
+      name: messageData.documentName || filename || `document_${Date.now()}.pdf`,
+    };
+    
+    console.log('Appending document:', documentFile.name, 'Type:', documentFile.type);
+    formData.append('document', documentFile);
   }
 
   // Handle audio
@@ -189,12 +205,13 @@ const ApiService = {
         hasImages: !!messageData.images,
         imageCount: messageData.images?.length || 0,
         hasAudio: !!messageData.audioUri,
+        hasDocument: !!messageData.documentUri,
       });
       console.log('Conversation ID:', conversationId);
 
       // Validate message data
-      if (!messageData.text && !messageData.images && !messageData.audioUri) {
-        throw new Error('Message must contain text, image, or audio');
+      if (!messageData.text && !messageData.images && !messageData.audioUri && !messageData.documentUri) {
+        throw new Error('Message must contain text, image, audio, or document');
       }
 
       // Create form data

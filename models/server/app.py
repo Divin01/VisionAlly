@@ -148,13 +148,13 @@ def generate_conversation_title(user_input, ai_response_text, image_present, aud
         ai_text = ai_response_text.strip()[:150]
         context_for_title = f"User: {user_text} | AI: {ai_text}"
         
-        prompt = f"Based on this safety/GBV conversation, generate a specific title in 2-4 words. Context: {context_for_title}"
+        prompt = f"Based on this career/employment conversation, generate a specific title in 2-4 words. Context: {context_for_title}"
 
         # Title generation system instruction
         title_system_instruction = (
-            "You are a concise title generator for safety conversations. "
+            "You are a concise title generator for career and employment conversations. "
             "Generate a 2-4 word title that captures the main topic. "
-            "Examples: 'Emergency Alert Help', 'Safety Planning Advice', 'Domestic Violence Support'. "
+            "Examples: 'CV Review Feedback', 'Interview Prep Tips', 'Job Search Strategy'. "
             "Output ONLY the title words, nothing else."
         )
         
@@ -195,7 +195,7 @@ def generate_conversation_title(user_input, ai_response_text, image_present, aud
         print(f"Title generation error: {e}")
         # Fallback titles
         if image_present:
-            return "Image Analysis"
+            return "Document Analysis"
         elif audio_present:
             return "Voice Message"
         else:
@@ -220,17 +220,18 @@ def chatbot_response():
         conversation_id = request.form.get("conversation_id", "")
         audio_file = request.files.get("audio")
         image_file = request.files.get("image")
+        document_file = request.files.get("document")
         
         print(f"\n=== VisionAlly Request at {datetime.now().strftime('%H:%M:%S')} ===")
         print(f"Text: {user_input[:50] if user_input else 'None'}...")
-        print(f"Audio: {audio_file is not None}, Image: {image_file is not None}")
+        print(f"Audio: {audio_file is not None}, Image: {image_file is not None}, Document: {document_file is not None}")
         print(f"Conversation ID: {conversation_id}")
         
         # Validate input
-        if not user_input and not audio_file and not image_file:
+        if not user_input and not audio_file and not image_file and not document_file:
             return jsonify({
                 "error": "no_input",
-                "response": "I didn't receive any message, audio, or image. Please try again.",
+                "response": "I didn't receive any message, audio, image, or document. Please try again.",
                 "status": "error"
             }), 400
         
@@ -290,9 +291,9 @@ def chatbot_response():
                 
                 if not user_input:
                     if image_file:
-                        content_parts.insert(0, "Analyze the image and listen to the audio message. Provide safety guidance based on both inputs.")
+                        content_parts.insert(0, "Analyze the image and listen to the audio message. Provide career-relevant guidance based on both inputs.")
                     else:
-                        content_parts.insert(0, "Please listen and respond to this audio message. Provide safety guidance and support.")
+                        content_parts.insert(0, "Please listen and respond to this audio message. Provide career-relevant guidance and support.")
                 else:
                     if not image_file:
                         content_parts.append(user_input)
@@ -314,14 +315,54 @@ def chatbot_response():
                     "status": "error"
                 }), 400
         
+        # Handle document (PDF) using Gemini File API
+        if document_file:
+            temp_doc_path = None
+            try:
+                doc_filename = document_file.filename or 'document.pdf'
+                doc_ext = os.path.splitext(doc_filename)[1] or '.pdf'
+                with tempfile.NamedTemporaryFile(delete=False, suffix=doc_ext) as temp_file:
+                    doc_data = document_file.read()
+                    temp_file.write(doc_data)
+                    temp_doc_path = temp_file.name
+                
+                print(f"Processing document: {doc_filename}, Size: {len(doc_data)} bytes")
+                
+                # Determine MIME type for documents
+                doc_mime = 'application/pdf'
+                if doc_ext.lower() in ['.doc', '.docx']:
+                    doc_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                elif doc_ext.lower() == '.txt':
+                    doc_mime = 'text/plain'
+                
+                uploaded_doc = genai.upload_file(path=temp_doc_path, mime_type=doc_mime)
+                print(f"Document uploaded: {uploaded_doc.uri}")
+                content_parts.append(uploaded_doc)
+                
+            except Exception as e:
+                print(f"Document upload error: {str(e)}")
+                return jsonify({
+                    "error": "document_error",
+                    "response": "Something went wrong while processing your document. Please ensure it is a valid PDF or text file.",
+                    "status": "error"
+                }), 400
+            finally:
+                if temp_doc_path and os.path.exists(temp_doc_path):
+                    try:
+                        os.unlink(temp_doc_path)
+                    except:
+                        pass
+        
         # Add text message
         if user_input:
-            if image_file and not audio_file:
-                content_parts.insert(0, f"User question about the image (safety/GBV context): {user_input}")
-            elif not image_file and not audio_file:
+            if (image_file or document_file) and not audio_file:
+                content_parts.insert(0, f"User question about the attached content: {user_input}")
+            elif not image_file and not audio_file and not document_file:
                 content_parts.append(user_input)
         elif image_file and not audio_file and not user_input:
-            content_parts.insert(0, "Please analyze this image in the context of safety and provide guidance if needed.")
+            content_parts.insert(0, "Please analyze this image and provide career-relevant guidance if applicable.")
+        elif document_file and not audio_file and not user_input:
+            content_parts.insert(0, "Please analyze this document and provide a concise summary with actionable career-relevant feedback.")
         
         print(f"Sending {len(content_parts)} parts to Gemini...")
         
@@ -330,7 +371,7 @@ def chatbot_response():
             content=content_parts,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
-                max_output_tokens=2000,
+                max_output_tokens=800,
                 top_p=0.95,
                 top_k=40,
             )
@@ -348,7 +389,7 @@ def chatbot_response():
         if should_generate_title:
             is_substantive = is_substantive_message(
                 user_input, 
-                image_file is not None, 
+                image_file is not None or document_file is not None, 
                 audio_file is not None
             )
             
@@ -356,7 +397,7 @@ def chatbot_response():
                 conversation_title = generate_conversation_title(
                     user_input, 
                     response_text, 
-                    image_file is not None, 
+                    image_file is not None or document_file is not None, 
                     audio_file is not None
                 )
                 session['title'] = conversation_title

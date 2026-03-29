@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import AudioRecorder from './AudioRecorder';
 import { COLORS } from '../../../constants/colors';
 
@@ -24,6 +25,7 @@ const ChatInput = ({ onSendMessage, disabled }) => {
   const [selectedImages, setSelectedImages] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingUri, setRecordingUri] = useState(null);
+  const [selectedDocument, setSelectedDocument] = useState(null);
   const [showMediaOptions, setShowMediaOptions] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -59,13 +61,18 @@ const ChatInput = ({ onSendMessage, disabled }) => {
     } else if (selectedImages.length > 0) {
       type = 'image';
       payload.images = selectedImages;
+    } else if (selectedDocument) {
+      type = 'document';
+      payload.documentUri = selectedDocument.uri;
+      payload.documentName = selectedDocument.name;
+      payload.documentMimeType = selectedDocument.mimeType;
     }
 
     return { type, ...payload };
   };
 
   const handleSend = async () => {
-    if ((!inputText.trim() && selectedImages.length === 0 && !recordingUri) || isSending) {
+    if ((!inputText.trim() && selectedImages.length === 0 && !recordingUri && !selectedDocument) || isSending) {
       return;
     }
 
@@ -103,6 +110,7 @@ const ChatInput = ({ onSendMessage, disabled }) => {
     setInputText('');
     setSelectedImages([]);
     setRecordingUri(null);
+    setSelectedDocument(null);
     setInputHeight(minInputHeight);
     setShowMediaOptions(false);
     
@@ -218,6 +226,36 @@ const ChatInput = ({ onSendMessage, disabled }) => {
     }
   };
 
+  const pickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'text/plain'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const doc = result.assets[0];
+        setSelectedDocument({
+          uri: doc.uri,
+          name: doc.name,
+          mimeType: doc.mimeType || 'application/pdf',
+          size: doc.size,
+        });
+
+        // Close media options and reset icon
+        setShowMediaOptions(false);
+        Animated.spring(mediaButtonRotate, {
+          toValue: 0,
+          useNativeDriver: true,
+          tension: 50,
+          friction: 5,
+        }).start();
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick document. Please try again.');
+    }
+  };
+
   const handleContentSizeChange = (event) => {
     const height = Math.min(
       Math.max(event.nativeEvent.contentSize.height, minInputHeight),
@@ -238,7 +276,7 @@ const ChatInput = ({ onSendMessage, disabled }) => {
   };
 
   const showAudioButton = !isRecording && !inputText.trim() && !recordingUri;
-  const isSendDisabled = isSending || disabled || (!inputText.trim() && selectedImages.length === 0 && !recordingUri);
+  const isSendDisabled = isSending || disabled || (!inputText.trim() && selectedImages.length === 0 && !recordingUri && !selectedDocument);
 
   return (
     <>
@@ -270,6 +308,22 @@ const ChatInput = ({ onSendMessage, disabled }) => {
           <Text style={styles.audioRecordedText}>Audio recorded</Text>
           <TouchableOpacity
             onPress={() => setRecordingUri(null)}
+            style={styles.removeAudioButton}
+          >
+            <Ionicons name="close-circle" size={18} color="#FF4444" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Document Preview Strip */}
+      {selectedDocument && (
+        <View style={styles.audioRecordedStrip}>
+          <Ionicons name="document-text" size={20} color={COLORS.primary} />
+          <Text style={styles.audioRecordedText} numberOfLines={1}>
+            {selectedDocument.name}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setSelectedDocument(null)}
             style={styles.removeAudioButton}
           >
             <Ionicons name="close-circle" size={18} color="#FF4444" />
@@ -321,7 +375,7 @@ const ChatInput = ({ onSendMessage, disabled }) => {
           />
 
           {/* Send Button - Show when there's content to send */}
-          {!isRecording && (inputText.trim() || selectedImages.length > 0 || recordingUri) && (
+          {!isRecording && (inputText.trim() || selectedImages.length > 0 || recordingUri || selectedDocument) && (
             <Animated.View style={{ transform: [{ scale: sendButtonScale }] }}>
               <TouchableOpacity
                 style={[
@@ -378,6 +432,17 @@ const ChatInput = ({ onSendMessage, disabled }) => {
                 <Ionicons name="camera" size={22} color="#FFFFFF" />
               </View>
               <Text style={styles.mediaOptionText}>Camera</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.mediaOption}
+              onPress={pickDocument}
+              accessibilityLabel="Upload document"
+            >
+              <View style={[styles.mediaIconContainer, { backgroundColor: '#F59E0B' }]}>
+                <Ionicons name="document-text" size={22} color="#FFFFFF" />
+              </View>
+              <Text style={styles.mediaOptionText}>Document</Text>
             </TouchableOpacity>
           </View>
         )}
