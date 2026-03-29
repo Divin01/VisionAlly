@@ -89,6 +89,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [statusLabel,   setStatusLabel]   = useState('');
   const [countdown,     setCountdown]     = useState(null);
+  const [isGeneratingFeedback, setIsGeneratingFeedback] = useState(false);
 
   // ── Refs (prevent stale closures in Gemini callbacks) ────────────────────────
   const roomStateRef         = useRef(STATE.LOADING); // mirrors roomState
@@ -305,10 +306,10 @@ export default function InterviewRoomScreen({ navigation, route }) {
         } catch {}
 
         if (roomStateRef.current === STATE.AI_SPEAKING) {
-          // Start 20-second response window
+          // Start 25-second response window
           setQuestionIndex(turnNum);
           setRoomStateSynced(STATE.USER_SPEAKING);
-          setCountdown(20);
+          setCountdown(25);
           setStatusLabel('Your turn — speak now');
 
           startVideoCapture();
@@ -481,7 +482,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
         ? `${Math.floor(durationMs / 60000)} min ${Math.floor((durationMs % 60000) / 1000)}s`
         : 'Unknown';
 
-      const prompt = `You just conducted a mock interview as VisionAlly AI Interview Coach. Generate a structured feedback report.
+      const prompt = `You are a strict senior hiring manager who just interviewed a candidate. Score them HONESTLY based on real interview standards — do NOT inflate scores to be nice.
 
 Candidate: ${profile.firstName || 'Candidate'}
 Field: ${profile.field || 'General'}
@@ -489,14 +490,23 @@ Experience: ${profile.experience || '0'} years
 Role: ${jobRole || 'General Practice'}
 Company: ${jobCompany || 'N/A'}
 Duration: ${durationStr}
-Questions Asked: 2
+
+SCORING GUIDELINES (be strict):
+- 0-30: Very poor — couldn't articulate basics, no relevant experience shown
+- 31-50: Below average — vague answers, no concrete examples, lacks preparation
+- 51-65: Average — decent communication but nothing stood out, generic responses
+- 66-80: Good — specific examples, clear communication, shows real competence
+- 81-90: Excellent — compelling answers with measurable achievements, confident and articulate
+- 91-100: Exceptional — reserved for truly outstanding candidates who would get immediate offers
+
+Most candidates should score between 40-70. Only give 80+ if truly deserved.
 
 Generate the feedback in this EXACT JSON format (no markdown, no code fences, just raw JSON):
 {
-  "q1Feedback": "Feedback for Question 1 (Tell me about yourself) — 2-3 sentences about what the candidate likely did well and could improve",
-  "q2Feedback": "Feedback for Question 2 (Follow-up question) — 2-3 sentences about strengths and areas to work on",
-  "generalAssessment": "Overall assessment — 3-4 sentences covering communication skills, confidence, preparation level, and specific actionable tips for improvement",
-  "score": 72
+  "q1Feedback": "Honest feedback for Question 1 — what was strong, what was weak, what was missing. Be specific and direct. 2-3 sentences.",
+  "q2Feedback": "Honest feedback for Question 2 — evaluate depth of answer, use of examples, relevance. 2-3 sentences.",
+  "generalAssessment": "Direct overall verdict — would you hire this person? Why or why not? 3-4 sentences with specific actionable advice.",
+  "score": 55
 }`;
 
       const formData = new FormData();
@@ -532,6 +542,7 @@ Generate the feedback in this EXACT JSON format (no markdown, no code fences, ju
   const handleSessionEnd = useCallback(async (manual = false) => {
     if (roomStateRef.current === STATE.ENDED) return;
     setRoomStateSynced(STATE.ENDED);
+    setIsGeneratingFeedback(true);
     setStatusLabel(manual ? 'Session ended' : 'Saving session…');
 
     await cleanup();
@@ -544,7 +555,7 @@ Generate the feedback in this EXACT JSON format (no markdown, no code fences, ju
     const audioUri = await combineSessionAudio();
 
     // Generate feedback report
-    setStatusLabel('Generating feedback…');
+    setStatusLabel('Generating your feedback…');
     const feedbackReport = await generateFeedbackReport(durationMs);
 
     // Save to storage
@@ -565,6 +576,7 @@ Generate the feedback in this EXACT JSON format (no markdown, no code fences, ju
       console.log('[Room] saveSession:', e);
     }
 
+    setIsGeneratingFeedback(false);
     setStatusLabel(manual ? 'Session ended' : 'Interview Complete!');
 
     if (manual) {
@@ -877,16 +889,27 @@ Generate the feedback in this EXACT JSON format (no markdown, no code fences, ju
       {/* Ended overlay */}
       {isEnded && (
         <View style={s.endedOverlay}>
-          <Ionicons name="checkmark-circle" size={64} color={C.success} />
-          <Text style={s.endedTitle}>Interview Complete!</Text>
-          <Text style={s.endedSub}>Your session has been saved.</Text>
-          <Text style={s.endedHint}>View your feedback in Past Interviews.</Text>
-          <TouchableOpacity style={s.closeEndBtn} onPress={safeGoBack} activeOpacity={0.85}>
-            <LinearGradient colors={[C.primary, C.primaryDark]} style={s.closeEndGradient}>
-              <Ionicons name="arrow-back" size={18} color={C.white} />
-              <Text style={s.closeEndText}>Back to Interviews</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+          {isGeneratingFeedback ? (
+            <>
+              <ActivityIndicator size="large" color={C.primary} style={{ marginBottom: 18 }} />
+              <Text style={s.endedTitle}>Generating Your Feedback…</Text>
+              <Text style={s.endedSub}>{statusLabel || 'Please wait while we analyze your performance.'}</Text>
+              <Text style={s.endedHint}>This may take a few seconds.</Text>
+            </>
+          ) : (
+            <>
+              <Ionicons name="checkmark-circle" size={64} color={C.success} />
+              <Text style={s.endedTitle}>Interview Complete!</Text>
+              <Text style={s.endedSub}>Your session has been saved.</Text>
+              <Text style={s.endedHint}>View your feedback in Past Interviews.</Text>
+              <TouchableOpacity style={s.closeEndBtn} onPress={safeGoBack} activeOpacity={0.85}>
+                <LinearGradient colors={[C.primary, C.primaryDark] } style={s.closeEndGradient}>
+                  <Ionicons name="arrow-back" size={18} color={C.white} />
+                  <Text style={s.closeEndText}>Back to Interviews</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       )}
     </View>

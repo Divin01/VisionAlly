@@ -393,9 +393,9 @@ export default function JobTrendsScreen({ navigation }) {
           data={loading ? [] : jobs}
           renderItem={renderJob}
           keyExtractor={keyExtractor}
-          ListHeaderComponent={ListHeader}
-          ListFooterComponent={ListFooter}
-          ListEmptyComponent={ListEmpty}
+          ListHeaderComponent={ListHeader()}
+          ListFooterComponent={ListFooter()}
+          ListEmptyComponent={ListEmpty()}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.4}
           showsVerticalScrollIndicator={false}
