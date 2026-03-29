@@ -78,9 +78,17 @@ async def handle_client(client_ws):
                             }
                         }
                     },
+                    "thinkingConfig": {
+                        "thinkingBudget": 0,
+                    },
                 },
                 "systemInstruction": {
                     "parts": [{"text": system_instruction}],
+                },
+                "realtimeInputConfig": {
+                    "automaticActivityDetection": {
+                        "disabled": True,
+                    },
                 },
             }
         }
@@ -155,14 +163,17 @@ async def _relay_client_to_gemini(client_ws, gemini_ws):
                 if 'realtimeInput' in parsed:
                     ri = parsed['realtimeInput']
                     if 'audio' in ri:
-                        print(f"[{_ts()}] → Gemini: audio chunk ({len(ri['audio'].get('data',''))[:6]}...)")
+                        print(f"[{_ts()}] → Gemini: audio chunk")
                     elif 'video' in ri:
                         print(f"[{_ts()}] → Gemini: video frame")
                     elif 'text' in ri:
                         print(f"[{_ts()}] → Gemini: text: {ri['text'][:80]}")
-                else:
-                    summary = json.dumps(parsed)[:150]
-                    print(f"[{_ts()}] → Gemini: {summary}")
+                    elif 'activityStart' in ri:
+                        print(f"[{_ts()}] → Gemini: activityStart")
+                    elif 'activityEnd' in ri:
+                        print(f"[{_ts()}] → Gemini: activityEnd")
+                    else:
+                        print(f"[{_ts()}] → Gemini: realtimeInput {list(ri.keys())}")
             except Exception:
                 print(f"[{_ts()}] → Gemini: (binary {len(message)} bytes)")
             await gemini_ws.send(message)

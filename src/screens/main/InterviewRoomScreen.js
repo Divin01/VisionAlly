@@ -87,6 +87,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const [loadingMsg,    setLoadingMsg]    = useState('Connecting to AI…');
   const [questionIndex, setQuestionIndex] = useState(0);
   const [statusLabel,   setStatusLabel]   = useState('');
+  const [countdown,     setCountdown]     = useState(null);
 
   // ── Refs (prevent stale closures in Gemini callbacks) ────────────────────────
   const roomStateRef         = useRef(STATE.LOADING); // mirrors roomState
@@ -107,6 +108,8 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const isPlayingRef         = useRef(false);
   const turnCompleteReceivedRef = useRef(false);
   const playNextRef          = useRef(null);
+  const countdownTimerRef    = useRef(null);
+  const aiTurnCountRef       = useRef(0);
 
   // Sync refs to state
   const setRoomStateSynced = useCallback((s) => {
@@ -140,6 +143,9 @@ export default function InterviewRoomScreen({ navigation, route }) {
     audioQueueRef.current = [];
     isPlayingRef.current = false;
     turnCompleteReceivedRef.current = false;
+    clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = null;
+    setCountdown(null);
     if (playbackRef.current) {
       try {
         await playbackRef.current.stopAsync();
@@ -185,6 +191,16 @@ export default function InterviewRoomScreen({ navigation, route }) {
 
   const startMicCapture = useCallback(async () => {
     if (recordingRef.current) return;
+    // Ensure recording mode is active before creating a recording
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS:         true,
+        playsInSilentModeIOS:       true,
+        staysActiveInBackground:    false,
+        shouldDuckAndroid:          false,
+        playThroughEarpieceAndroid: false,
+      });
+    } catch {}
     try {
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync(makeRecordingOptions());
@@ -193,8 +209,10 @@ export default function InterviewRoomScreen({ navigation, route }) {
 
       chunkIntervalRef.current = setInterval(async () => {
         if (!recordingRef.current || isMutedRef.current) return;
+        if (!chunkIntervalRef.current) return; // Interval cleared — abort
         try {
           await recordingRef.current.stopAndUnloadAsync();
+          if (!chunkIntervalRef.current) return; // Cleared during async — abort
           const uri = recordingRef.current.getURI();
 
           if (uri) {
@@ -207,13 +225,18 @@ export default function InterviewRoomScreen({ navigation, route }) {
             FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
           }
 
+          if (!chunkIntervalRef.current) return; // Cleared during async — abort
+
           // Restart for next chunk
           const newRec = new Audio.Recording();
           await newRec.prepareToRecordAsync(makeRecordingOptions());
           await newRec.startAsync();
           recordingRef.current = newRec;
         } catch (e) {
-          console.warn('[Room] chunk error:', e.message);
+          // Only warn if interval is still active (ignore cleanup race errors)
+          if (chunkIntervalRef.current) {
+            console.warn('[Room] chunk error:', e.message);
+          }
         }
       }, 200);
     } catch (err) {
@@ -228,6 +251,11 @@ export default function InterviewRoomScreen({ navigation, route }) {
       isPlayingRef.current = true;
       setRoomStateSynced(STATE.AI_SPEAKING);
       setStatusLabel('VisionAlly is speaking…');
+
+      // Clear any active countdown timer
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+      setCountdown(null);
 
       // Stop mic & pause video & switch to speaker mode
       await stopMicCapture();
@@ -252,8 +280,18 @@ export default function InterviewRoomScreen({ navigation, route }) {
       isPlayingRef.current = false;
       if (turnCompleteReceivedRef.current) {
         turnCompleteReceivedRef.current = false;
-        // Brief delay to let speaker audio dissipate before opening mic
+        aiTurnCountRef.current += 1;
+        const turnNum = aiTurnCountRef.current;
+
+        // Brief delay to let speaker audio dissipate
         await new Promise(r => setTimeout(r, 300));
+
+        if (turnNum >= 3) {
+          // Interview complete — save session and show end screen
+          handleSessionEndRef.current?.(false);
+          return;
+        }
+
         // Switch back to recording mode for mic capture
         try {
           await Audio.setAudioModeAsync({
@@ -264,13 +302,40 @@ export default function InterviewRoomScreen({ navigation, route }) {
             playThroughEarpieceAndroid: false,
           });
         } catch {}
+
         if (roomStateRef.current === STATE.AI_SPEAKING) {
+          // Start 20-second response window
+          setQuestionIndex(turnNum);
           setRoomStateSynced(STATE.USER_SPEAKING);
+          setCountdown(20);
           setStatusLabel('Your turn — speak now');
+
           startVideoCapture();
           if (!isMutedRef.current) {
             startMicCapture();
           }
+
+          // Tell Gemini user started speaking
+          geminiRef.current?.sendActivityStart();
+
+          // 20-second countdown timer
+          countdownTimerRef.current = setInterval(() => {
+            setCountdown(prev => {
+              if (prev === null || prev <= 1) {
+                clearInterval(countdownTimerRef.current);
+                countdownTimerRef.current = null;
+                // Time's up — end user's turn
+                stopMicCapture();
+                stopVideoCapture();
+                geminiRef.current?.sendActivityEnd();
+                setCountdown(null);
+                setRoomStateSynced(STATE.AI_SPEAKING);
+                setStatusLabel('VisionAlly is thinking…');
+                return null;
+              }
+              return prev - 1;
+            });
+          }, 1000);
         }
       }
       return;
@@ -320,11 +385,14 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const cleanup = useCallback(async () => {
     clearInterval(chunkIntervalRef.current);
     clearInterval(videoIntervalRef.current);
+    clearInterval(countdownTimerRef.current);
     chunkIntervalRef.current = null;
     videoIntervalRef.current = null;
+    countdownTimerRef.current = null;
     audioQueueRef.current = [];
     isPlayingRef.current = false;
     turnCompleteReceivedRef.current = false;
+    setCountdown(null);
     if (recordingRef.current) {
       try { await recordingRef.current.stopAndUnloadAsync(); } catch { /* ignore */ }
       recordingRef.current = null;
@@ -345,12 +413,12 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const handleSessionEnd = useCallback(async (manual = false) => {
     if (roomStateRef.current === STATE.ENDED) return; // prevent double-call
     setRoomStateSynced(STATE.ENDED);
-    setStatusLabel('Saving session…');
+    setStatusLabel(manual ? 'Session ended' : 'Interview Complete!');
 
     await cleanup();
 
     const durationMs = sessionStartRef.current ? Date.now() - sessionStartRef.current : 0;
-    const completed  = !manual && transcriptRef.current.length >= 4;
+    const completed  = !manual;
 
     try {
       await InterviewStorageService.saveSession({
@@ -366,8 +434,10 @@ export default function InterviewRoomScreen({ navigation, route }) {
       console.log('[Room] saveSession:', e);
     }
 
-    // BUG 3 FIX: use navigate + goBack, not replace
-    try { navigation.goBack(); } catch { navigation.navigate('Main'); }
+    // Only auto-navigate on manual end. Natural end shows the completed overlay.
+    if (manual) {
+      try { navigation.goBack(); } catch { navigation.navigate('Main'); }
+    }
   }, [cleanup, profile, jobRole, jobCompany, navigation, setRoomStateSynced]);
 
   // Keep ref always fresh
@@ -576,7 +646,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
         <Text style={s.topTitle}>VisionAlly</Text>
         {questionIndex > 0 && (
           <View style={s.qChip}>
-            <Text style={s.qChipTxt}>Q {questionIndex}/4</Text>
+            <Text style={s.qChipTxt}>Q {questionIndex}/2</Text>
           </View>
         )}
       </Animated.View>
@@ -619,13 +689,20 @@ export default function InterviewRoomScreen({ navigation, route }) {
         </View>
       )}
 
-      {/* User speaking */}
+      {/* User speaking + countdown timer */}
       {roomState === STATE.USER_SPEAKING && (
         <View style={s.speakWrap}>
+          {countdown !== null && (
+            <View style={s.countdownCircle}>
+              <Text style={s.countdownNum}>{countdown}</Text>
+            </View>
+          )}
           <Animated.View style={[s.micRing, { transform: [{ scale: micPulse }] }]}>
             <Ionicons name="mic" size={20} color={C.white} />
           </Animated.View>
-          <Text style={s.speakTxt}>Listening…</Text>
+          <Text style={s.speakTxt}>
+            {countdown !== null ? `${countdown}s remaining` : 'Listening…'}
+          </Text>
         </View>
       )}
 
@@ -669,9 +746,15 @@ export default function InterviewRoomScreen({ navigation, route }) {
       {isEnded && (
         <View style={s.endedOverlay}>
           <Ionicons name="checkmark-circle" size={64} color={C.success} />
-          <Text style={s.endedTitle}>Session Complete</Text>
-          <Text style={s.endedSub}>Saving your results…</Text>
-          <ActivityIndicator size="small" color={C.white} style={{ marginTop: 16 }} />
+          <Text style={s.endedTitle}>Interview Complete!</Text>
+          <Text style={s.endedSub}>Your session has been saved.</Text>
+          <Text style={s.endedHint}>View your feedback in Past Interviews.</Text>
+          <TouchableOpacity style={s.closeEndBtn} onPress={safeGoBack} activeOpacity={0.85}>
+            <LinearGradient colors={[C.primary, C.primaryDark]} style={s.closeEndGradient}>
+              <Ionicons name="arrow-back" size={18} color={C.white} />
+              <Text style={s.closeEndText}>Back to Interviews</Text>
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -734,6 +817,13 @@ const s = StyleSheet.create({
   endedOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.82)', alignItems: 'center', justifyContent: 'center', gap: 12 },
   endedTitle:   { color: C.white, fontSize: 24, fontWeight: '800' },
   endedSub:     { color: 'rgba(255,255,255,0.70)', fontSize: 14, fontWeight: '500' },
+  endedHint:    { color: 'rgba(255,255,255,0.50)', fontSize: 13, textAlign: 'center', marginTop: 4 },
+  closeEndBtn:  { marginTop: 24, borderRadius: 14, overflow: 'hidden' },
+  closeEndGradient: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 24, paddingVertical: 14 },
+  closeEndText: { color: C.white, fontSize: 15, fontWeight: '700' },
+
+  countdownCircle: { width: 72, height: 72, borderRadius: 36, borderWidth: 3, borderColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 8, backgroundColor: 'rgba(139,92,246,0.15)' },
+  countdownNum:    { fontSize: 28, fontWeight: '900', color: C.white },
 });
 
 // Need to import StyleSheet properly

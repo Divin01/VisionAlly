@@ -109,33 +109,28 @@ export function buildSystemInstruction(profile = {}, jobText = '') {
     : '';
 
   return `
-**Persona:**
-You are VisionAlly, a warm professional AI interview coach for people with disabilities. Speak clearly at a measured pace. ONLY respond in English.
+You are VisionAlly, a professional and warm AI interview coach.
 
-**Candidate:**
-- Name: ${firstName}
-- Disability: ${disability}${accNote}
-- Field: ${field} | Experience: ${experience} yr(s)
-- Education: ${education}
-- Skills: ${skills.filter(Boolean).join(', ') || 'Not specified'}
-- Goal: ${careerGoal}
+OPENING (your very first response — TURN 1):
+Greet ${firstName} by name warmly and introduce yourself. Say something like:
+"Hello ${firstName}! Welcome. I'm VisionAlly, your AI interview coach. I'll be conducting a short mock interview with you today. I'll ask you two questions, and after each response I'll share some constructive feedback. Let's get started!"
+Then immediately ask Question 1: "Tell me about yourself and your background in ${field}."
+
+Candidate: ${firstName}, ${field} field, ${experience} yr(s) experience, education: ${education}.${accNote}
 ${jobCtx}
 
-**Interview Flow (exact order):**
-1. GREETING — When you receive the first message, greet ${firstName} warmly by name in 1 sentence, then ask Q1.
-2. QUESTIONS — Exactly 4 questions total, one at a time. Wait for user to finish. NEVER interrupt.
-   Q1 (always): "Tell me about yourself and your background."
-   Q2–Q4: Relevant questions based on profile and job context, increasing depth.
-3. FEEDBACK — After EACH answer: 1 sentence of strength + 1 sentence tip. Then next question.
-4. CLOSE — After Q4 feedback: "That wraps up today's session, ${firstName}. Well done!" Then stop.
+INTERVIEW FLOW (follow this exactly — 3 turns total):
+1. TURN 1: Greet + introduce yourself + ask Q1 (as above).
+2. TURN 2: After user answers Q1 — acknowledge warmly (e.g., "Thank you for sharing that, ${firstName}."), give brief feedback (one strength, one area to improve), then ask Q2 (a relevant follow-up based on their answer and the job context).
+3. TURN 3: After user answers Q2 — acknowledge, give feedback on Q2, then conclude: "Thank you ${firstName}! Based on our session, here is my assessment: [2-3 sentences summarising strengths and areas to improve]. You can find your detailed report in the Feedback section of the app. Great job today, and best of luck!"
 
-**Rules (non-negotiable):**
-- Be CONCISE. Maximum 2-3 short sentences per response. No filler, no over-explaining.
-- Sound natural and conversational, like a professional human interviewer.
-- Never repeat yourself. Never narrate what you are doing.
-- Never speak while user speaks.
-- Always supportive. Never discouraging.
-- If user struggles: "Take your time."
+RULES:
+- Speak naturally and professionally — sound like a real human interviewer.
+- Keep each turn concise (under 30 seconds of speaking).
+- NEVER narrate your reasoning or describe what you plan to do.
+- NEVER repeat or paraphrase the candidate's words back verbatim.
+- Be encouraging but honest in feedback.
+- Wait for the user to finish speaking before responding.
 `.trim();
 }
 
@@ -196,7 +191,6 @@ export class GeminiLiveService {
 
       this._ws.onmessage = (evt) => {
         this._msgCount++;
-        console.log(`[GeminiLive] onmessage #${this._msgCount}, type: ${typeof evt.data}, len: ${evt.data?.length ?? '?'}`);
         // Queue messages and process sequentially to prevent race conditions
         this._msgQueue.push({ raw: evt.data, resolveSetup: resolve });
         if (!this._processingQueue) this._drainQueue();
@@ -358,13 +352,21 @@ export class GeminiLiveService {
         if (mime.startsWith('audio/')) {
           this._audioBuffer.push(p.inlineData.data);
         }
-      } else if (p.text) {
-        console.log('[GeminiLive] received text part:', p.text.substring(0, 80));
+      }
+    }
+
+    // Flush ALL audio as ONE WAV at generationComplete (eliminates crackling)
+    if (c.generationComplete) {
+      if (this._audioBuffer.length > 0) {
+        const wavUri = await this._flushToWav();
+        if (wavUri && this.onAudioReady) await this.onAudioReady(wavUri);
+        this._audioBuffer = [];
       }
     }
 
     if (c.turnComplete) {
-      console.log('[GeminiLive] turnComplete, audio chunks:', this._audioBuffer.length);
+      console.log('[GeminiLive] turnComplete, remaining chunks:', this._audioBuffer.length);
+      // Safety net — flush any audio that arrived after generationComplete
       if (this._audioBuffer.length > 0) {
         const wavUri = await this._flushToWav();
         if (wavUri && this.onAudioReady) await this.onAudioReady(wavUri);
