@@ -39,6 +39,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons }      from '@expo/vector-icons';
 import { GeminiLiveService, buildSystemInstruction } from '../../services/GeminiLiveService';
 import { InterviewStorageService } from '../../services/InterviewStorageService';
+import { API_CONFIG } from '../../services/ApiService';
 
 const { height: H } = Dimensions.get('window');
 
@@ -110,6 +111,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const playNextRef          = useRef(null);
   const countdownTimerRef    = useRef(null);
   const aiTurnCountRef       = useRef(0);
+  const sessionAudioFilesRef = useRef([]);  // Track all AI audio WAVs for replay
 
   // Sync refs to state
   const setRoomStateSynced = useCallback((s) => {
@@ -131,10 +133,9 @@ export default function InterviewRoomScreen({ navigation, route }) {
   // ─── Safe navigation ─────────────────────────────────────────────────────────
   const safeGoBack = useCallback(() => {
     try {
-      if (navigation.canGoBack()) navigation.goBack();
-      else navigation.navigate('Main');
+      navigation.navigate('Main', { refreshInterviews: Date.now() });
     } catch {
-      try { navigation.navigate('Main'); } catch { /* nothing */ }
+      try { if (navigation.canGoBack()) navigation.goBack(); } catch { /* nothing */ }
     }
   }, [navigation]);
 
@@ -353,13 +354,14 @@ export default function InterviewRoomScreen({ navigation, route }) {
         if (status.didJustFinish) {
           sound.unloadAsync().catch(() => {});
           playbackRef.current = null;
-          FileSystem.deleteAsync(wavUri, { idempotent: true }).catch(() => {});
+          // Keep audio file for session replay — add to saved list
+          sessionAudioFilesRef.current.push(wavUri);
           playNextRef.current?.();
         }
       });
     } catch (err) {
       console.log('[Room] playNext:', err);
-      FileSystem.deleteAsync(wavUri, { idempotent: true }).catch(() => {});
+      sessionAudioFilesRef.current.push(wavUri); // Still keep file even if playback failed
       playNextRef.current?.();
     }
   };
@@ -393,6 +395,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
     isPlayingRef.current = false;
     turnCompleteReceivedRef.current = false;
     setCountdown(null);
+    // NOTE: do NOT clear sessionAudioFilesRef here — we need them for saving
     if (recordingRef.current) {
       try { await recordingRef.current.stopAndUnloadAsync(); } catch { /* ignore */ }
       recordingRef.current = null;
@@ -408,20 +411,146 @@ export default function InterviewRoomScreen({ navigation, route }) {
     geminiRef.current = null;
   }, []);
 
+  // ─── Combine saved AI audio WAVs into one file ────────────────────────────
+  const combineSessionAudio = useCallback(async () => {
+    const files = sessionAudioFilesRef.current;
+    if (files.length === 0) return null;
+    try {
+      // Read all WAV files, strip 44-byte headers, concatenate raw PCM
+      const pcmChunks = [];
+      for (const uri of files) {
+        try {
+          const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+          const raw = atob(b64);
+          // Skip 44-byte WAV header
+          const pcm = raw.slice(44);
+          pcmChunks.push(pcm);
+        } catch { /* skip bad files */ }
+      }
+      if (pcmChunks.length === 0) return null;
+
+      const allPcm = pcmChunks.join('');
+      const pcmBytes = new Uint8Array(allPcm.length);
+      for (let i = 0; i < allPcm.length; i++) pcmBytes[i] = allPcm.charCodeAt(i);
+
+      // Build WAV header for combined audio
+      const sr = 24000, ch = 1, bits = 16;
+      const byteRate = sr * ch * (bits / 8);
+      const blkAlign = ch * (bits / 8);
+      const buf = new ArrayBuffer(44);
+      const v = new DataView(buf);
+      const s = (off, str) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
+      s(0, 'RIFF'); v.setUint32(4, 36 + pcmBytes.length, true);
+      s(8, 'WAVE'); s(12, 'fmt ');
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+      v.setUint16(22, ch, true); v.setUint32(24, sr, true);
+      v.setUint32(28, byteRate, true); v.setUint16(32, blkAlign, true);
+      v.setUint16(34, bits, true); s(36, 'data'); v.setUint32(40, pcmBytes.length, true);
+
+      const hdr = new Uint8Array(buf);
+      const wav = new Uint8Array(hdr.length + pcmBytes.length);
+      wav.set(hdr, 0);
+      wav.set(pcmBytes, hdr.length);
+
+      // Encode to base64
+      let b64Out = '';
+      wav.forEach(b => { b64Out += String.fromCharCode(b); });
+      b64Out = btoa(b64Out);
+
+      // Save to documentDirectory (persistent)
+      const outUri = `${FileSystem.documentDirectory}interview_${Date.now()}.wav`;
+      await FileSystem.writeAsStringAsync(outUri, b64Out, { encoding: FileSystem.EncodingType.Base64 });
+
+      // Cleanup individual temp WAVs
+      for (const uri of files) {
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+      sessionAudioFilesRef.current = [];
+
+      return outUri;
+    } catch (e) {
+      console.log('[Room] combineSessionAudio:', e);
+      return null;
+    }
+  }, []);
+
+  // ─── Generate feedback report via chatbot API ───────────────────────────────
+  const generateFeedbackReport = useCallback(async (durationMs) => {
+    try {
+      const durationStr = durationMs > 0
+        ? `${Math.floor(durationMs / 60000)} min ${Math.floor((durationMs % 60000) / 1000)}s`
+        : 'Unknown';
+
+      const prompt = `You just conducted a mock interview as VisionAlly AI Interview Coach. Generate a structured feedback report.
+
+Candidate: ${profile.firstName || 'Candidate'}
+Field: ${profile.field || 'General'}
+Experience: ${profile.experience || '0'} years
+Role: ${jobRole || 'General Practice'}
+Company: ${jobCompany || 'N/A'}
+Duration: ${durationStr}
+Questions Asked: 2
+
+Generate the feedback in this EXACT JSON format (no markdown, no code fences, just raw JSON):
+{
+  "q1Feedback": "Feedback for Question 1 (Tell me about yourself) — 2-3 sentences about what the candidate likely did well and could improve",
+  "q2Feedback": "Feedback for Question 2 (Follow-up question) — 2-3 sentences about strengths and areas to work on",
+  "generalAssessment": "Overall assessment — 3-4 sentences covering communication skills, confidence, preparation level, and specific actionable tips for improvement",
+  "score": 72
+}`;
+
+      const formData = new FormData();
+      formData.append('message', prompt);
+
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/chatbot`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error(`API ${response.status}`);
+      const data = await response.json();
+      const aiText = data.response || data.text || '';
+
+      // Parse JSON from the response
+      const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return { q1Feedback: 'Feedback unavailable.', q2Feedback: 'Feedback unavailable.', generalAssessment: aiText, score: null };
+    } catch (e) {
+      console.log('[Room] generateFeedbackReport:', e);
+      return {
+        q1Feedback: 'Feedback could not be generated. Please try again.',
+        q2Feedback: 'Feedback could not be generated.',
+        generalAssessment: 'The session was recorded successfully. Feedback generation encountered an error.',
+        score: null,
+      };
+    }
+  }, [profile, jobRole, jobCompany]);
+
   // ─── Session end ──────────────────────────────────────────────────────────────
-  // BUG 4 FIX: store in ref so Gemini callback always calls the latest version
   const handleSessionEnd = useCallback(async (manual = false) => {
-    if (roomStateRef.current === STATE.ENDED) return; // prevent double-call
+    if (roomStateRef.current === STATE.ENDED) return;
     setRoomStateSynced(STATE.ENDED);
-    setStatusLabel(manual ? 'Session ended' : 'Interview Complete!');
+    setStatusLabel(manual ? 'Session ended' : 'Saving session…');
 
     await cleanup();
 
     const durationMs = sessionStartRef.current ? Date.now() - sessionStartRef.current : 0;
     const completed  = !manual;
 
+    // Combine all AI audio into one replay file
+    setStatusLabel('Saving audio…');
+    const audioUri = await combineSessionAudio();
+
+    // Generate feedback report
+    setStatusLabel('Generating feedback…');
+    const feedbackReport = await generateFeedbackReport(durationMs);
+
+    // Save to storage
+    let sessionId = null;
     try {
-      await InterviewStorageService.saveSession({
+      sessionId = await InterviewStorageService.saveSession({
         exchanges:   transcriptRef.current,
         profile,
         jobRole,
@@ -429,16 +558,19 @@ export default function InterviewRoomScreen({ navigation, route }) {
         systemPrompt: '',
         durationMs,
         status: completed ? 'completed' : 'incomplete',
+        audioUri,
+        feedbackReport,
       });
     } catch (e) {
       console.log('[Room] saveSession:', e);
     }
 
-    // Only auto-navigate on manual end. Natural end shows the completed overlay.
+    setStatusLabel(manual ? 'Session ended' : 'Interview Complete!');
+
     if (manual) {
-      try { navigation.goBack(); } catch { navigation.navigate('Main'); }
+      navigation.navigate('Main', { refreshInterviews: Date.now() });
     }
-  }, [cleanup, profile, jobRole, jobCompany, navigation, setRoomStateSynced]);
+  }, [cleanup, profile, jobRole, jobCompany, navigation, setRoomStateSynced, combineSessionAudio, generateFeedbackReport]);
 
   // Keep ref always fresh
   useEffect(() => { handleSessionEndRef.current = handleSessionEnd; }, [handleSessionEnd]);

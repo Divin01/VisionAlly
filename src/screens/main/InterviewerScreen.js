@@ -1,5 +1,5 @@
 // src/screens/main/InterviewerScreen.js
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,9 +13,11 @@ import {
   StatusBar,
   Dimensions,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -69,6 +71,14 @@ const scoreToColor = (score) => {
   return '#EF4444';
 };
 
+const formatMs = (ms) => {
+  if (!ms || ms <= 0) return '0:00';
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+};
+
 // ─── Score Ring Component ──────────────────────────────────────────────────────
 const ScoreRing = ({ score, color }) => {
   if (!score) {
@@ -87,7 +97,7 @@ const ScoreRing = ({ score, color }) => {
 };
 
 // ─── Interview Card Component ──────────────────────────────────────────────────
-const InterviewCard = ({ item, onToggleFavorite, onDelete }) => {
+const InterviewCard = ({ item, onToggleFavorite, onDelete, onReplay, onFeedback }) => {
   const isIncomplete = item.status === 'incomplete';
   const scoreColor = item.scoreColor ?? scoreToColor(item.score);
 
@@ -172,16 +182,16 @@ const InterviewCard = ({ item, onToggleFavorite, onDelete }) => {
 
       {/* Card Footer */}
       <View style={styles.cardFooter}>
-        <TouchableOpacity style={styles.footerBtn}>
-          <Ionicons name="play-circle-outline" size={15} color={COLORS.primary} />
-          <Text style={styles.footerBtnText}>
+        <TouchableOpacity style={styles.footerBtn} onPress={() => onReplay(item)}>
+          <Ionicons name="play-circle-outline" size={15} color={item.audioUri ? COLORS.primary : COLORS.textTertiary} />
+          <Text style={[styles.footerBtnText, !item.audioUri && { color: COLORS.textTertiary }]}>
             {isIncomplete ? 'Resume' : 'Replay'}
           </Text>
         </TouchableOpacity>
         <View style={styles.footerSep} />
-        <TouchableOpacity style={styles.footerBtn}>
-          <Ionicons name="bar-chart-outline" size={15} color={COLORS.primary} />
-          <Text style={styles.footerBtnText}>Feedback</Text>
+        <TouchableOpacity style={styles.footerBtn} onPress={() => onFeedback(item)}>
+          <Ionicons name="bar-chart-outline" size={15} color={item.feedbackReport ? COLORS.primary : COLORS.textTertiary} />
+          <Text style={[styles.footerBtnText, !item.feedbackReport && { color: COLORS.textTertiary }]}>Feedback</Text>
         </TouchableOpacity>
         <View style={styles.footerSep} />
         <TouchableOpacity style={styles.footerBtn} onPress={() => onDelete(item.id)}>
@@ -201,6 +211,16 @@ export default function InterviewerScreen({ navigation, route }) {
   const [interviews, setInterviews] = useState([]);
   const [loadingStart, setLoadingStart] = useState(false);
 
+  // Replay modal state
+  const [replaySession, setReplaySession] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackPosition, setPlaybackPosition] = useState(0);
+  const [playbackDuration, setPlaybackDuration] = useState(0);
+  const soundRef = useRef(null);
+
+  // Feedback modal state
+  const [feedbackSession, setFeedbackSession] = useState(null);
+
   // ── Load sessions from AsyncStorage ─────────────────────────────────────────
   const loadSessions = useCallback(async () => {
     const sessions = await InterviewStorageService.getAllSessions();
@@ -218,6 +238,23 @@ export default function InterviewerScreen({ navigation, route }) {
     }
   }, [route?.params?.refreshInterviews, loadSessions]);
 
+  // Auto-refresh when screen gets focus (navigation listener)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadSessions();
+    });
+    return unsubscribe;
+  }, [navigation, loadSessions]);
+
+  // Cleanup sound on unmount
+  useEffect(() => {
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync().catch(() => {});
+      }
+    };
+  }, []);
+
   // ── Toggle / Delete ──────────────────────────────────────────────────────────
   const toggleFavorite = async (id) => {
     await InterviewStorageService.toggleFavorite(id);
@@ -233,6 +270,11 @@ export default function InterviewerScreen({ navigation, route }) {
         {
           text: 'Delete', style: 'destructive',
           onPress: async () => {
+            // Also delete saved audio file
+            const session = interviews.find(s => s.id === id);
+            if (session?.audioUri) {
+              FileSystem.deleteAsync(session.audioUri, { idempotent: true }).catch(() => {});
+            }
             await InterviewStorageService.deleteSession(id);
             loadSessions();
           },
@@ -240,6 +282,102 @@ export default function InterviewerScreen({ navigation, route }) {
       ]
     );
   };
+
+  // ── Replay handlers ─────────────────────────────────────────────────────────
+  const openReplay = useCallback(async (session) => {
+    if (!session.audioUri) {
+      Alert.alert('No Recording', 'This session does not have a saved audio recording.');
+      return;
+    }
+    // Verify file exists
+    const info = await FileSystem.getInfoAsync(session.audioUri);
+    if (!info.exists) {
+      Alert.alert('File Missing', 'The audio recording file could not be found.');
+      return;
+    }
+    setReplaySession(session);
+    setPlaybackPosition(0);
+    setPlaybackDuration(0);
+    setIsPlaying(false);
+  }, []);
+
+  const closeReplay = useCallback(async () => {
+    if (soundRef.current) {
+      try { await soundRef.current.unloadAsync(); } catch { /* ok */ }
+      soundRef.current = null;
+    }
+    setReplaySession(null);
+    setIsPlaying(false);
+    setPlaybackPosition(0);
+    setPlaybackDuration(0);
+  }, []);
+
+  const togglePlayback = useCallback(async () => {
+    if (!replaySession?.audioUri) return;
+
+    if (soundRef.current && isPlaying) {
+      await soundRef.current.pauseAsync();
+      setIsPlaying(false);
+      return;
+    }
+
+    if (soundRef.current && !isPlaying) {
+      await soundRef.current.playAsync();
+      setIsPlaying(true);
+      return;
+    }
+
+    // Load and play
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+      });
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: replaySession.audioUri },
+        { shouldPlay: true },
+        (status) => {
+          if (status.isLoaded) {
+            setPlaybackPosition(status.positionMillis || 0);
+            setPlaybackDuration(status.durationMillis || 0);
+            if (status.didJustFinish) {
+              setIsPlaying(false);
+              setPlaybackPosition(0);
+            }
+          }
+        }
+      );
+      soundRef.current = sound;
+      setIsPlaying(true);
+    } catch (e) {
+      console.log('[Replay] playback error:', e);
+      Alert.alert('Playback Error', 'Could not play the audio recording.');
+    }
+  }, [replaySession, isPlaying]);
+
+  const restartPlayback = useCallback(async () => {
+    if (soundRef.current) {
+      await soundRef.current.setPositionAsync(0);
+      await soundRef.current.playAsync();
+      setIsPlaying(true);
+    }
+  }, []);
+
+  // ── Feedback handlers ────────────────────────────────────────────────────────
+  const openFeedback = useCallback((session) => {
+    if (!session.feedbackReport) {
+      Alert.alert('No Feedback', 'Feedback is not available for this session yet.');
+      return;
+    }
+    setFeedbackSession(session);
+  }, []);
+
+  const closeFeedback = useCallback(() => {
+    setFeedbackSession(null);
+  }, []);
 
   // ─── START INTERVIEW FLOW ────────────────────────────────────────────────────
   const handleStartInterview = async () => {
@@ -597,6 +735,8 @@ export default function InterviewerScreen({ navigation, route }) {
               item={item}
               onToggleFavorite={toggleFavorite}
               onDelete={deleteInterview}
+              onReplay={openReplay}
+              onFeedback={openFeedback}
             />
           ))
         ) : (
@@ -626,6 +766,156 @@ export default function InterviewerScreen({ navigation, route }) {
         <View style={{ height: 110 }} />
       </ScrollView>
       </View>
+
+      {/* ── Replay Modal ──────────────────────────────────────── */}
+      <Modal
+        visible={!!replaySession}
+        animationType="slide"
+        transparent
+        onRequestClose={closeReplay}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Session Replay</Text>
+                <Text style={styles.modalSubtitle} numberOfLines={1}>
+                  {replaySession?.role} {replaySession?.company ? `• ${replaySession.company}` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={closeReplay} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Player */}
+            <View style={styles.playerContainer}>
+              <View style={styles.playerIconBg}>
+                <Ionicons name="headset" size={48} color={COLORS.primary} />
+              </View>
+
+              <Text style={styles.playerLabel}>AI Interview Audio</Text>
+              <Text style={styles.playerDate}>{replaySession?.date} • {replaySession?.duration}</Text>
+
+              {/* Progress bar */}
+              <View style={styles.progressBarBg}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    { width: playbackDuration > 0 ? `${(playbackPosition / playbackDuration) * 100}%` : '0%' },
+                  ]}
+                />
+              </View>
+              <View style={styles.progressTimeRow}>
+                <Text style={styles.progressTime}>{formatMs(playbackPosition)}</Text>
+                <Text style={styles.progressTime}>{formatMs(playbackDuration)}</Text>
+              </View>
+
+              {/* Controls */}
+              <View style={styles.playerControls}>
+                <TouchableOpacity onPress={restartPlayback} style={styles.playerSecondaryBtn}>
+                  <Ionicons name="play-skip-back" size={22} color={COLORS.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={togglePlayback} style={styles.playerPlayBtn}>
+                  <LinearGradient
+                    colors={[COLORS.primary, COLORS.primaryDark]}
+                    style={styles.playerPlayBtnGradient}
+                  >
+                    <Ionicons name={isPlaying ? 'pause' : 'play'} size={30} color={COLORS.white} />
+                  </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (soundRef.current) {
+                      const status = await soundRef.current.getStatusAsync();
+                      if (status.isLoaded) {
+                        const newPos = Math.min(status.positionMillis + 15000, status.durationMillis || 0);
+                        await soundRef.current.setPositionAsync(newPos);
+                      }
+                    }
+                  }}
+                  style={styles.playerSecondaryBtn}
+                >
+                  <Ionicons name="play-skip-forward" size={22} color={COLORS.primary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Feedback Modal ────────────────────────────────────── */}
+      <Modal
+        visible={!!feedbackSession}
+        animationType="slide"
+        transparent
+        onRequestClose={closeFeedback}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { maxHeight: '80%' }]}>
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Session Feedback</Text>
+                <Text style={styles.modalSubtitle} numberOfLines={1}>
+                  {feedbackSession?.role} {feedbackSession?.company ? `• ${feedbackSession.company}` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={closeFeedback} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              {/* Score */}
+              {feedbackSession?.feedbackReport?.score != null && (
+                <View style={styles.fbScoreRow}>
+                  <View style={[styles.fbScoreBadge, { borderColor: scoreToColor(feedbackSession.feedbackReport.score) }]}>
+                    <Text style={[styles.fbScoreValue, { color: scoreToColor(feedbackSession.feedbackReport.score) }]}>
+                      {feedbackSession.feedbackReport.score}%
+                    </Text>
+                  </View>
+                  <Text style={styles.fbScoreLabel}>Overall Score</Text>
+                </View>
+              )}
+
+              {/* Q1 Feedback */}
+              <View style={styles.fbSection}>
+                <View style={styles.fbSectionHeader}>
+                  <View style={[styles.fbSectionDot, { backgroundColor: COLORS.primary }]} />
+                  <Text style={styles.fbSectionTitle}>Question 1 — Introduction</Text>
+                </View>
+                <Text style={styles.fbSectionText}>
+                  {feedbackSession?.feedbackReport?.q1Feedback || 'No feedback available.'}
+                </Text>
+              </View>
+
+              {/* Q2 Feedback */}
+              <View style={styles.fbSection}>
+                <View style={styles.fbSectionHeader}>
+                  <View style={[styles.fbSectionDot, { backgroundColor: COLORS.warning }]} />
+                  <Text style={styles.fbSectionTitle}>Question 2 — Follow-up</Text>
+                </View>
+                <Text style={styles.fbSectionText}>
+                  {feedbackSession?.feedbackReport?.q2Feedback || 'No feedback available.'}
+                </Text>
+              </View>
+
+              {/* General Assessment */}
+              <View style={[styles.fbSection, { marginBottom: 24 }]}>
+                <View style={styles.fbSectionHeader}>
+                  <View style={[styles.fbSectionDot, { backgroundColor: COLORS.success }]} />
+                  <Text style={styles.fbSectionTitle}>General Assessment</Text>
+                </View>
+                <Text style={styles.fbSectionText}>
+                  {feedbackSession?.feedbackReport?.generalAssessment || 'No assessment available.'}
+                </Text>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1109,5 +1399,175 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontWeight: '700',
     fontSize: 14,
+  },
+
+  // ── Modal Styles ─────────────────────────────────────────
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.backgroundSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Player Styles ────────────────────────────────────────
+  playerContainer: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 16,
+  },
+  playerIconBg: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: `${COLORS.primary}12`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  playerLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  playerDate: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 24,
+  },
+  progressBarBg: {
+    width: '100%',
+    height: 4,
+    backgroundColor: COLORS.borderLight,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: COLORS.primary,
+    borderRadius: 2,
+  },
+  progressTimeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 6,
+    marginBottom: 20,
+  },
+  progressTime: {
+    fontSize: 11,
+    color: COLORS.textTertiary,
+    fontVariant: ['tabular-nums'],
+  },
+  playerControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+  },
+  playerSecondaryBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: `${COLORS.primary}12`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playerPlayBtn: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    overflow: 'hidden',
+  },
+  playerPlayBtnGradient: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Feedback Modal Styles ────────────────────────────────
+  fbScoreRow: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  fbScoreBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  fbScoreValue: {
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  fbScoreLabel: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  fbSection: {
+    marginHorizontal: 20,
+    marginBottom: 16,
+    backgroundColor: COLORS.backgroundSecondary,
+    borderRadius: 14,
+    padding: 16,
+  },
+  fbSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  fbSectionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  fbSectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  fbSectionText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
   },
 });

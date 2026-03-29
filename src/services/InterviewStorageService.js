@@ -91,18 +91,17 @@ export const InterviewStorageService = {
    * @param {'completed'|'incomplete'} opts.status
    * @returns {Promise<string>}          - Session ID
    */
-  async saveSession({ exchanges, profile, jobRole, jobCompany, systemPrompt, durationMs, status }) {
+  async saveSession({ exchanges, profile, jobRole, jobCompany, systemPrompt, durationMs, status, audioUri, feedbackReport }) {
     try {
       const id      = generateSessionId();
       const now     = new Date();
-      const score   = status === 'completed' ? deriveScore(exchanges) : null;
+      const score   = feedbackReport?.score ?? (status === 'completed' ? deriveScore(exchanges) : null);
       const tags    = deriveTags(exchanges, profile);
 
       // Build a concise combined feedback from all AI feedback texts
       const allFeedback = (exchanges ?? []).map(e => e.feedback).filter(Boolean);
-      const combinedFeedback = allFeedback.length
-        ? allFeedback[allFeedback.length - 1] // last piece is most summarising
-        : 'Session recorded.';
+      const combinedFeedback = feedbackReport?.generalAssessment
+        || (allFeedback.length ? allFeedback[allFeedback.length - 1] : 'Session recorded.');
 
       /** @type {InterviewSession} */
       const session = {
@@ -119,6 +118,8 @@ export const InterviewStorageService = {
         scoreColor:   scoreToColor(score),
         exchanges:    exchanges ?? [],
         systemPrompt: systemPrompt ?? '',
+        audioUri:     audioUri ?? null,
+        feedbackReport: feedbackReport ?? null,
         createdAt:    now.getTime(),
       };
 
@@ -158,6 +159,18 @@ export const InterviewStorageService = {
     } catch (err) {
       console.log('[InterviewStorage] getAllSessions error:', err);
       return [];
+    }
+  },
+
+  // ── Update a session (e.g. add feedback after async generation) ──────────────
+  async updateSession(id, updates) {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.SESSION_PREFIX + id);
+      if (!raw) return;
+      const session = { ...JSON.parse(raw), ...updates };
+      await AsyncStorage.setItem(KEYS.SESSION_PREFIX + id, JSON.stringify(session));
+    } catch (err) {
+      console.log('[InterviewStorage] updateSession error:', err);
     }
   },
 
