@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   Animated,
 } from 'react-native';
-import * as Audio from 'expo-audio';
+import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../../../constants/colors';
 
@@ -17,47 +17,73 @@ const AudioPlayer = ({ uri, duration, isUser }) => {
   const [playbackPosition, setPlaybackPosition] = useState(0);
   const [playbackDuration, setPlaybackDuration] = useState(0);
   const progressAnim = useRef(new Animated.Value(0)).current;
+  const soundRef = useRef(null);
 
+  // Load sound on mount to get duration immediately
   useEffect(() => {
-    return sound
-      ? () => {
-          sound.unloadAsync();
+    let mounted = true;
+    const loadSound = async () => {
+      try {
+        const { sound: newSound, status } = await Audio.Sound.createAsync(
+          { uri },
+          { shouldPlay: false }
+        );
+        if (!mounted) {
+          await newSound.unloadAsync();
+          return;
         }
-      : undefined;
-  }, [sound]);
+        soundRef.current = newSound;
+        setSound(newSound);
+        if (status.isLoaded && status.durationMillis) {
+          setPlaybackDuration(status.durationMillis);
+        }
+
+        newSound.setOnPlaybackStatusUpdate((s) => {
+          if (!mounted) return;
+          if (s.isLoaded) {
+            setPlaybackPosition(s.positionMillis);
+            if (s.durationMillis) setPlaybackDuration(s.durationMillis);
+
+            const progress = s.durationMillis
+              ? s.positionMillis / s.durationMillis
+              : 0;
+            Animated.timing(progressAnim, {
+              toValue: progress,
+              duration: 100,
+              useNativeDriver: false,
+            }).start();
+
+            if (s.didJustFinish) {
+              setIsPlaying(false);
+              setPlaybackPosition(0);
+              progressAnim.setValue(0);
+            }
+          }
+        });
+      } catch (e) {
+        console.warn('AudioPlayer: failed to load sound', e);
+      }
+    };
+    if (uri) loadSound();
+
+    return () => {
+      mounted = false;
+      soundRef.current?.unloadAsync();
+    };
+  }, [uri]);
 
   const playSound = async () => {
-    if (sound && isPlaying) {
+    if (!sound) return;
+    if (isPlaying) {
       await sound.pauseAsync();
       setIsPlaying(false);
-    } else if (sound && !isPlaying) {
-      await sound.playAsync();
-      setIsPlaying(true);
     } else {
-      const { sound: newSound } = await Audio.Sound.createAsync({ uri });
-      setSound(newSound);
-      
-      newSound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded) {
-          setPlaybackPosition(status.positionMillis);
-          setPlaybackDuration(status.durationMillis);
-          
-          const progress = status.positionMillis / status.durationMillis;
-          Animated.timing(progressAnim, {
-            toValue: progress,
-            duration: 100,
-            useNativeDriver: false,
-          }).start();
-
-          if (status.didJustFinish) {
-            setIsPlaying(false);
-            setPlaybackPosition(0);
-            progressAnim.setValue(0);
-          }
-        }
-      });
-
-      await newSound.playAsync();
+      // If playback finished, replay from start
+      const status = await sound.getStatusAsync();
+      if (status.isLoaded && status.positionMillis === status.durationMillis) {
+        await sound.setPositionAsync(0);
+      }
+      await sound.playAsync();
       setIsPlaying(true);
     }
   };
@@ -111,7 +137,7 @@ const AudioPlayer = ({ uri, duration, isUser }) => {
         />
         
         <Text style={[styles.audioDuration, isUser && styles.userAudioDuration]}>
-          {playbackDuration > 0 ? formatTime(playbackPosition) : '0:00'} / {duration}
+          {formatTime(playbackPosition)} / {playbackDuration > 0 ? formatTime(playbackDuration) : (duration || '0:00')}
         </Text>
       </View>
     </View>

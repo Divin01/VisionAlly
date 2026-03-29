@@ -366,12 +366,21 @@ def chatbot_response():
         
         print(f"Sending {len(content_parts)} parts to Gemini...")
         
+        # Allow client to request more tokens (e.g. for structured feedback)
+        requested_max_tokens = request.form.get("max_tokens", None)
+        max_tokens = 800
+        if requested_max_tokens:
+            try:
+                max_tokens = min(int(requested_max_tokens), 4096)
+            except (ValueError, TypeError):
+                pass
+        
         # Send to Gemini
         response = chat.send_message(
             content=content_parts,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.7,
-                max_output_tokens=800,
+                max_output_tokens=max_tokens,
                 top_p=0.95,
                 top_k=40,
             )
