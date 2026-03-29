@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, Platform, StatusBar, ActivityIndicator,
-  Linking, Alert, Animated, Dimensions,
+  Linking, Alert, Animated, Dimensions, ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -120,8 +120,21 @@ export default function JobTrendsScreen({ navigation }) {
   const [trends,         setTrends]    = useState([]);
   const [trendsLoading,  setTrendsLoading] = useState(true);
 
-  const searchTimeout = useRef(null);
-  const flatListRef   = useRef(null);
+  const searchTimeout    = useRef(null);
+  const flatListRef      = useRef(null);
+  const scrollableHeight = useRef(0);
+  const isStickyRef      = useRef(false);
+  const [stickyVisible, setStickyVisible] = useState(false);
+  const [snapOffset,    setSnapOffset]    = useState(0);
+
+  const handleScroll = useCallback((e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const shouldStick = scrollableHeight.current > 0 && y >= scrollableHeight.current;
+    if (shouldStick !== isStickyRef.current) {
+      isStickyRef.current = shouldStick;
+      setStickyVisible(shouldStick);
+    }
+  }, []);
 
   // ── Initial load ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -190,60 +203,9 @@ export default function JobTrendsScreen({ navigation }) {
 
   const keyExtractor = useCallback(item => item.id, []);
 
-  const ListHeader = () => (
-    <View>
-      {/* ── Summary stats ────────────────────────────────────────────────── */}
-      <View style={styles.statsRow}>
-        <StatCard
-          icon="briefcase-outline"
-          label="Total Listings"
-          value={totalListed > 0 ? `${(totalListed / 1000).toFixed(0)}k+` : '—'}
-          color={COLORS.primary}
-        />
-        <StatCard
-          icon="trending-up"
-          label="Top Category"
-          value={topCat?.label ?? '—'}
-          color={COLORS.success}
-        />
-        <StatCard
-          icon="search-outline"
-          label="Your Results"
-          value={totalJobs > 0 ? `${totalJobs}` : '—'}
-          color={COLORS.inkMid}
-        />
-      </View>
-
-      {/* ── Trend category bar ────────────────────────────────────────────── */}
-      {!trendsLoading && (
-        <View style={styles.trendBarsSection}>
-          <Text style={styles.trendBarsTitle}>Hottest Categories</Text>
-          {trends.slice(0, 5).map((t, i) => {
-            const pct = totalListed > 0 ? (t.count / totalListed) : 0;
-            return (
-              <TouchableOpacity
-                key={i}
-                style={styles.trendBar}
-                onPress={() => handleCategoryPress(t.tag)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.trendBarLeft}>
-                  <Ionicons name={t.icon} size={14} color={t.color} />
-                  <Text style={styles.trendBarLabel}>{t.label}</Text>
-                </View>
-                <View style={styles.trendBarTrack}>
-                  <View style={[styles.trendBarFill, { width: `${Math.min(pct * 100 * 3, 100)}%`, backgroundColor: t.color }]} />
-                </View>
-                <Text style={[styles.trendBarCount, { color: t.color }]}>
-                  {t.count > 999 ? `${(t.count / 1000).toFixed(1)}k` : t.count}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      )}
-
-      {/* ── Search bar ───────────────────────────────────────────────────── */}
+  // ── Shared search + filter (used both inline and as sticky overlay) ──────
+  const renderSearchAndFilter = () => (
+    <>
       <View style={styles.searchSection}>
         <View style={styles.searchBar}>
           <Ionicons name="search-outline" size={18} color={COLORS.textTertiary} />
@@ -263,17 +225,16 @@ export default function JobTrendsScreen({ navigation }) {
         </View>
       </View>
 
-      {/* ── Category filter chips ─────────────────────────────────────────── */}
-      <FlatList
+      <ScrollView
         horizontal
-        data={ALL_CATS}
-        keyExtractor={c => c.tag || 'all'}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.catChips}
-        renderItem={({ item }) => {
+      >
+        {ALL_CATS.map(item => {
           const active = activeCategory === item.tag;
           return (
             <TouchableOpacity
+              key={item.tag || 'all'}
               style={[styles.catChip, active && { backgroundColor: item.color, borderColor: item.color }]}
               onPress={() => handleCategoryPress(item.tag)}
               activeOpacity={0.8}
@@ -284,10 +245,9 @@ export default function JobTrendsScreen({ navigation }) {
               </Text>
             </TouchableOpacity>
           );
-        }}
-      />
+        })}
+      </ScrollView>
 
-      {/* ── Results count ─────────────────────────────────────────────────── */}
       {!loading && (
         <View style={styles.resultsCount}>
           <Text style={styles.resultsCountText}>
@@ -303,6 +263,69 @@ export default function JobTrendsScreen({ navigation }) {
           )}
         </View>
       )}
+    </>
+  );
+
+  const ListHeader = () => (
+    <View>
+      {/* ── Scrollable zone: stats + hottest categories (scrolls away) ──── */}
+      <View onLayout={(e) => {
+        const h = e.nativeEvent.layout.height;
+        scrollableHeight.current = h;
+        if (h !== snapOffset) setSnapOffset(h);
+      }}>
+        <View style={styles.statsRow}>
+          <StatCard
+            icon="briefcase-outline"
+            label="Total Listings"
+            value={totalListed > 0 ? `${(totalListed / 1000).toFixed(0)}k+` : '—'}
+            color={COLORS.primary}
+          />
+          <StatCard
+            icon="trending-up"
+            label="Top Category"
+            value={topCat?.label ?? '—'}
+            color={COLORS.success}
+          />
+          <StatCard
+            icon="search-outline"
+            label="Your Results"
+            value={totalJobs > 0 ? `${totalJobs}` : '—'}
+            color={COLORS.inkMid}
+          />
+        </View>
+
+        {!trendsLoading && (
+          <View style={styles.trendBarsSection}>
+            <Text style={styles.trendBarsTitle}>Hottest Categories</Text>
+            {trends.slice(0, 5).map((t, i) => {
+              const pct = totalListed > 0 ? (t.count / totalListed) : 0;
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={styles.trendBar}
+                  onPress={() => handleCategoryPress(t.tag)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.trendBarLeft}>
+                    <Ionicons name={t.icon} size={14} color={t.color} />
+                    <Text style={styles.trendBarLabel}>{t.label}</Text>
+                  </View>
+                  <View style={styles.trendBarTrack}>
+                    <View style={[styles.trendBarFill, { width: `${Math.min(pct * 100 * 3, 100)}%`, backgroundColor: t.color }]} />
+                  </View>
+                  <Text style={[styles.trendBarCount, { color: t.color }]}>
+                    {t.count > 999 ? `${(t.count / 1000).toFixed(1)}k` : t.count}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      {/* ── Sticky zone: search + filter (also rendered as overlay) ──────── */}
+      {renderSearchAndFilter()}
     </View>
   );
 
@@ -358,6 +381,13 @@ export default function JobTrendsScreen({ navigation }) {
       </LinearGradient>
 
       <View style={styles.contentSheet}>
+        {/* Sticky search + filter — appears when scrolled past the stats/trends */}
+        {stickyVisible && (
+          <View style={styles.stickyWrapper}>
+            {renderSearchAndFilter()}
+          </View>
+        )}
+
         <FlatList
           ref={flatListRef}
           data={loading ? [] : jobs}
@@ -370,6 +400,11 @@ export default function JobTrendsScreen({ navigation }) {
           onEndReachedThreshold={0.4}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.flatContent}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          snapToOffsets={snapOffset > 0 ? [snapOffset] : undefined}
+          snapToEnd={false}
+          decelerationRate="fast"
           removeClippedSubviews
           maxToRenderPerBatch={8}
           windowSize={10}
@@ -414,6 +449,20 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     marginTop: -20,
     overflow: 'hidden',
+  },
+
+  // Sticky search + filter overlay
+  stickyWrapper: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    zIndex: 10,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12 },
+      android: { elevation: 8 },
+    }),
   },
 
   // Stats
