@@ -400,7 +400,7 @@ export default function HomeScreen({ navigation }) {
           <View style={styles.sectionHeader}>
             <View style={styles.sectionTitleRow}>
               <View style={[styles.sectionDot, { backgroundColor: COLORS.primary }]} />
-              <Text style={styles.sectionTitle}>🔥 Market Trends</Text>
+              <Text style={styles.sectionTitle}>Market Trends</Text>
             </View>
             <TouchableOpacity
               onPress={() => navigation.getParent()?.jumpTo('jobtrends')}

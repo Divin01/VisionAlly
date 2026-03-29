@@ -4,3 +4,4 @@ pillow
 google-generativeai
 python-dotenv
 scipy
+websockets
