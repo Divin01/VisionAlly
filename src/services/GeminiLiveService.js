@@ -55,7 +55,6 @@ function getRelayUrl() {
 }
 
 const OUTPUT_SAMPLE_RATE = 24000; // Gemini outputs 24 kHz PCM
-const STREAM_BATCH_SIZE = 10;     // Flush audio every ~500ms for real-time playback
 
 // ─── WAV Header ───────────────────────────────────────────────────────────────
 function buildWavHeader(pcmLen, sr = OUTPUT_SAMPLE_RATE, ch = 1, bits = 16) {
@@ -123,15 +122,17 @@ You are VisionAlly, a warm professional AI interview coach for people with disab
 ${jobCtx}
 
 **Interview Flow (exact order):**
-1. INTRO — already done externally. When user taps Start, go straight to Q1. No re-greeting.
-2. QUESTIONS — Exactly 4 questions, one at a time. Wait silently until user is completely done. NEVER interrupt.
-   Q1 (always): "Can you start by telling me a bit about yourself and your background?"
-   Q2–Q4: Relevant questions increasing in depth based on profile and job context.
-3. FEEDBACK — After EACH answer: 2 sentences (one strength + one tip). Then next question immediately.
-4. CLOSE — After Q4 feedback: "That wraps up today's session, ${firstName}. Well done! Your summary is being prepared." Then stop.
+1. GREETING — When you receive the first message, greet ${firstName} warmly by name in 1 sentence, then ask Q1.
+2. QUESTIONS — Exactly 4 questions total, one at a time. Wait for user to finish. NEVER interrupt.
+   Q1 (always): "Tell me about yourself and your background."
+   Q2–Q4: Relevant questions based on profile and job context, increasing depth.
+3. FEEDBACK — After EACH answer: 1 sentence of strength + 1 sentence tip. Then next question.
+4. CLOSE — After Q4 feedback: "That wraps up today's session, ${firstName}. Well done!" Then stop.
 
 **Rules (non-negotiable):**
-- Max 60 words per response (~15 seconds speech).
+- Be CONCISE. Maximum 2-3 short sentences per response. No filler, no over-explaining.
+- Sound natural and conversational, like a professional human interviewer.
+- Never repeat yourself. Never narrate what you are doing.
 - Never speak while user speaks.
 - Always supportive. Never discouraging.
 - If user struggles: "Take your time."
@@ -146,6 +147,8 @@ export class GeminiLiveService {
     this._isSetupComplete = false;
     this._audioBuffer     = [];
     this._resumptionToken = null;
+    this._msgQueue        = [];
+    this._processingQueue = false;
 
     // Set these before calling connect()
     this.onSetupComplete = null; // ()
@@ -194,9 +197,9 @@ export class GeminiLiveService {
       this._ws.onmessage = (evt) => {
         this._msgCount++;
         console.log(`[GeminiLive] onmessage #${this._msgCount}, type: ${typeof evt.data}, len: ${evt.data?.length ?? '?'}`);
-        this._handleMessage(evt.data, resolve).catch(e => {
-          console.log('[GeminiLive] _handleMessage error:', e);
-        });
+        // Queue messages and process sequentially to prevent race conditions
+        this._msgQueue.push({ raw: evt.data, resolveSetup: resolve });
+        if (!this._processingQueue) this._drainQueue();
       };
 
       this._ws.onerror = (err) => {
@@ -235,6 +238,17 @@ export class GeminiLiveService {
         },
       },
     });
+  }
+
+  // Manual activity signals for strict turn-taking (auto-detection disabled)
+  sendActivityStart() {
+    if (!this.isReady) return;
+    this._send({ realtimeInput: { activityStart: {} } });
+  }
+
+  sendActivityEnd() {
+    if (!this.isReady) return;
+    this._send({ realtimeInput: { activityEnd: {} } });
   }
 
   // ✅ FIXED: use realtimeInput.text (matches geminilive.js reference)
@@ -280,6 +294,21 @@ export class GeminiLiveService {
     }
     this._isConnected = this._isSetupComplete = false;
     this._audioBuffer = [];
+    this._msgQueue = [];
+    this._processingQueue = false;
+  }
+
+  async _drainQueue() {
+    this._processingQueue = true;
+    while (this._msgQueue.length > 0) {
+      const { raw, resolveSetup } = this._msgQueue.shift();
+      try {
+        await this._handleMessage(raw, resolveSetup);
+      } catch (e) {
+        console.log('[GeminiLive] _handleMessage error:', e);
+      }
+    }
+    this._processingQueue = false;
   }
 
   async _handleMessage(raw, resolveSetup) {
@@ -326,7 +355,6 @@ export class GeminiLiveService {
     for (const p of parts) {
       if (p.inlineData?.data) {
         const mime = p.inlineData.mimeType || '';
-        console.log('[GeminiLive] received part mimeType:', mime, 'data length:', p.inlineData.data.length);
         if (mime.startsWith('audio/')) {
           this._audioBuffer.push(p.inlineData.data);
         }
@@ -335,18 +363,11 @@ export class GeminiLiveService {
       }
     }
 
-    // Stream audio in batches for real-time playback
-    if (this._audioBuffer.length >= STREAM_BATCH_SIZE && !c.turnComplete) {
-      const wavUri = await this._flushToWav();
-      if (wavUri && this.onAudioReady) this.onAudioReady(wavUri);
-      this._audioBuffer = [];
-    }
-
     if (c.turnComplete) {
-      console.log('[GeminiLive] turnComplete, remaining chunks:', this._audioBuffer.length);
+      console.log('[GeminiLive] turnComplete, audio chunks:', this._audioBuffer.length);
       if (this._audioBuffer.length > 0) {
         const wavUri = await this._flushToWav();
-        if (wavUri && this.onAudioReady) this.onAudioReady(wavUri);
+        if (wavUri && this.onAudioReady) await this.onAudioReady(wavUri);
         this._audioBuffer = [];
       }
       if (this.onTurnComplete) this.onTurnComplete();

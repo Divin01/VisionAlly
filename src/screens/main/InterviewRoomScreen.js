@@ -229,8 +229,9 @@ export default function InterviewRoomScreen({ navigation, route }) {
       setRoomStateSynced(STATE.AI_SPEAKING);
       setStatusLabel('VisionAlly is speaking…');
 
-      // Stop mic & switch to speaker mode (allowsRecordingIOS: false → main speaker)
+      // Stop mic & pause video & switch to speaker mode
       await stopMicCapture();
+      stopVideoCapture();
       try {
         await Audio.setAudioModeAsync({
           allowsRecordingIOS:         false,
@@ -243,7 +244,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
 
       playNextRef.current?.();
     }
-  }, [setRoomStateSynced, stopMicCapture]);
+  }, [setRoomStateSynced, stopMicCapture, stopVideoCapture]);
 
   // Assign playNext via ref to avoid circular useCallback deps
   playNextRef.current = async () => {
@@ -251,7 +252,9 @@ export default function InterviewRoomScreen({ navigation, route }) {
       isPlayingRef.current = false;
       if (turnCompleteReceivedRef.current) {
         turnCompleteReceivedRef.current = false;
-        // Switch back to recording mode (routes to earpiece — fine for mic)
+        // Brief delay to let speaker audio dissipate before opening mic
+        await new Promise(r => setTimeout(r, 300));
+        // Switch back to recording mode for mic capture
         try {
           await Audio.setAudioModeAsync({
             allowsRecordingIOS:         true,
@@ -264,7 +267,10 @@ export default function InterviewRoomScreen({ navigation, route }) {
         if (roomStateRef.current === STATE.AI_SPEAKING) {
           setRoomStateSynced(STATE.USER_SPEAKING);
           setStatusLabel('Your turn — speak now');
-          if (!isMutedRef.current) startMicCapture();
+          startVideoCapture();
+          if (!isMutedRef.current) {
+            startMicCapture();
+          }
         }
       }
       return;
@@ -376,10 +382,10 @@ export default function InterviewRoomScreen({ navigation, route }) {
       if (!cameraPermission?.granted) await requestCamera();
       if (!micPermission?.granted)    await requestMic();
 
-      // 2. ✅ expo-av audio mode (NOT expo-audio)
+      // 2. ✅ expo-av audio mode — start in playback mode (speaker, not earpiece)
       try {
         await Audio.setAudioModeAsync({
-          allowsRecordingIOS:         true,
+          allowsRecordingIOS:         false,
           playsInSilentModeIOS:       true,
           staysActiveInBackground:    false,
           shouldDuckAndroid:          false,
@@ -413,9 +419,9 @@ export default function InterviewRoomScreen({ navigation, route }) {
         setRoomStateSynced(STATE.READY);
         setStatusLabel('Tap Start to begin');
       };
-      svc.onAudioReady = async (wavUri) => {
+      svc.onAudioReady = (wavUri) => {
         if (cancelled) return;
-        await enqueueAudio(wavUri);
+        return enqueueAudio(wavUri);
       };
 
       svc.onTurnComplete = () => {
@@ -432,6 +438,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
         stopPlayback(); // clears queue + refs
         setRoomStateSynced(STATE.USER_SPEAKING);
         setStatusLabel('Listening…');
+        startVideoCapture();
         if (!isMutedRef.current) startMicCapture();
       };
 
@@ -485,14 +492,12 @@ export default function InterviewRoomScreen({ navigation, route }) {
     setQuestionIndex(1);
     setRoomStateSynced(STATE.AI_SPEAKING);
     setStatusLabel('Starting…');
-    startVideoCapture();
 
-    // ✅ Greeting + Q1 in one shot — no state race possible
+    // Kick off the interview — AI greets per system instruction
     geminiRef.current?.sendClientTurn(
-      `Greet ${profile?.firstName ?? 'the candidate'} warmly in 1-2 sentences as VisionAlly AI Interview Coach, ` +
-      `then immediately ask Question 1: "Can you start by telling me a bit about yourself and your background?"`
+      `Start the interview now.`
     );
-  }, [setRoomStateSynced, startVideoCapture, profile]);
+  }, [setRoomStateSynced]);
   // ─── Mute toggle ──────────────────────────────────────────────────────────────
   const handleToggleMute = useCallback(async () => {
     const nowMuted = !isMutedRef.current;
