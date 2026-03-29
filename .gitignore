@@ -42,6 +42,5 @@ yarn-error.*
 config.js
 
 .env
-app.py
 
 GBV-PRESENTATION.pptx
