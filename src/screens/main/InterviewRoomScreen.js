@@ -34,7 +34,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { Audio }         from 'expo-av';           
-import * as FileSystem   from 'expo-file-system';
+import * as FileSystem   from 'expo-file-system/legacy';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons }      from '@expo/vector-icons';
 import { GeminiLiveService, buildSystemInstruction } from '../../services/GeminiLiveService';
@@ -103,6 +103,10 @@ export default function InterviewRoomScreen({ navigation, route }) {
   const handleSessionEndRef  = useRef(null);          // BUG 4 fix: always-fresh ref
   const cameraRef            = useRef(null);
   const questionIndexRef     = useRef(0);
+  const audioQueueRef        = useRef([]);
+  const isPlayingRef         = useRef(false);
+  const turnCompleteReceivedRef = useRef(false);
+  const playNextRef          = useRef(null);
 
   // Sync refs to state
   const setRoomStateSynced = useCallback((s) => {
@@ -131,8 +135,11 @@ export default function InterviewRoomScreen({ navigation, route }) {
     }
   }, [navigation]);
 
-  // ─── Audio playback ───────────────────────────────────────────────────────────
+  // ─── Audio playback (queue-based for streaming) ────────────────────────────
   const stopPlayback = useCallback(async () => {
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    turnCompleteReceivedRef.current = false;
     if (playbackRef.current) {
       try {
         await playbackRef.current.stopAsync();
@@ -141,31 +148,6 @@ export default function InterviewRoomScreen({ navigation, route }) {
       playbackRef.current = null;
     }
   }, []);
-
-  const playAudio = useCallback(async (wavUri) => {
-    try {
-      await stopPlayback();
-      setRoomStateSynced(STATE.AI_SPEAKING);
-      setStatusLabel('VisionAlly is speaking…');
-
-      // ✅ expo-av API
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: wavUri },
-        { shouldPlay: true, volume: 1.0 },
-      );
-      playbackRef.current = sound;
-
-      sound.setOnPlaybackStatusUpdate(status => {
-        if (status.didJustFinish) {
-          sound.unloadAsync().catch(() => {});
-          playbackRef.current = null;
-          FileSystem.deleteAsync(wavUri, { idempotent: true }).catch(() => {});
-        }
-      });
-    } catch (err) {
-      console.log('[Room] playAudio:', err);
-    }
-  }, [stopPlayback, setRoomStateSynced]);
 
   // ─── Mic capture ─────────────────────────────────────────────────────────────
   const stopMicCapture = useCallback(async () => {
@@ -239,6 +221,78 @@ export default function InterviewRoomScreen({ navigation, route }) {
     }
   }, []);
 
+  // ─── Queue-based audio playback (streams segments in real-time) ─────────────
+  const enqueueAudio = useCallback(async (wavUri) => {
+    audioQueueRef.current.push(wavUri);
+    if (!isPlayingRef.current) {
+      isPlayingRef.current = true;
+      setRoomStateSynced(STATE.AI_SPEAKING);
+      setStatusLabel('VisionAlly is speaking…');
+
+      // Stop mic & switch to speaker mode (allowsRecordingIOS: false → main speaker)
+      await stopMicCapture();
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS:         false,
+          playsInSilentModeIOS:       true,
+          staysActiveInBackground:    false,
+          shouldDuckAndroid:          false,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch {}
+
+      playNextRef.current?.();
+    }
+  }, [setRoomStateSynced, stopMicCapture]);
+
+  // Assign playNext via ref to avoid circular useCallback deps
+  playNextRef.current = async () => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingRef.current = false;
+      if (turnCompleteReceivedRef.current) {
+        turnCompleteReceivedRef.current = false;
+        // Switch back to recording mode (routes to earpiece — fine for mic)
+        try {
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS:         true,
+            playsInSilentModeIOS:       true,
+            staysActiveInBackground:    false,
+            shouldDuckAndroid:          false,
+            playThroughEarpieceAndroid: false,
+          });
+        } catch {}
+        if (roomStateRef.current === STATE.AI_SPEAKING) {
+          setRoomStateSynced(STATE.USER_SPEAKING);
+          setStatusLabel('Your turn — speak now');
+          if (!isMutedRef.current) startMicCapture();
+        }
+      }
+      return;
+    }
+
+    const wavUri = audioQueueRef.current.shift();
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: wavUri },
+        { shouldPlay: true, volume: 1.0 },
+      );
+      playbackRef.current = sound;
+
+      sound.setOnPlaybackStatusUpdate(status => {
+        if (status.didJustFinish) {
+          sound.unloadAsync().catch(() => {});
+          playbackRef.current = null;
+          FileSystem.deleteAsync(wavUri, { idempotent: true }).catch(() => {});
+          playNextRef.current?.();
+        }
+      });
+    } catch (err) {
+      console.log('[Room] playNext:', err);
+      FileSystem.deleteAsync(wavUri, { idempotent: true }).catch(() => {});
+      playNextRef.current?.();
+    }
+  };
+
   // ─── Video capture (1 FPS) ────────────────────────────────────────────────────
   const stopVideoCapture = useCallback(() => {
     clearInterval(videoIntervalRef.current);
@@ -250,7 +304,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
     videoIntervalRef.current = setInterval(async () => {
       if (!cameraRef.current || isCameraOffRef.current) return;
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, base64: true, skipProcessing: true });
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, base64: true, skipProcessing: true, shutterSound: false });
         if (photo?.base64) geminiRef.current?.sendVideoFrame(photo.base64);
       } catch { /* ignore — camera may not be ready */ }
     }, 1000);
@@ -262,6 +316,9 @@ export default function InterviewRoomScreen({ navigation, route }) {
     clearInterval(videoIntervalRef.current);
     chunkIntervalRef.current = null;
     videoIntervalRef.current = null;
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    turnCompleteReceivedRef.current = false;
     if (recordingRef.current) {
       try { await recordingRef.current.stopAndUnloadAsync(); } catch { /* ignore */ }
       recordingRef.current = null;
@@ -358,24 +415,21 @@ export default function InterviewRoomScreen({ navigation, route }) {
       };
       svc.onAudioReady = async (wavUri) => {
         if (cancelled) return;
-        await playAudio(wavUri);
+        await enqueueAudio(wavUri);
       };
 
       svc.onTurnComplete = () => {
         if (cancelled) return;
-        const current = roomStateRef.current;
-        console.log('[Room] turnComplete, state:', current);
-
-        // ✅ Only handle AI_SPEAKING → USER_SPEAKING transition
-        if (current === STATE.AI_SPEAKING) {
-          setRoomStateSynced(STATE.USER_SPEAKING);
-          setStatusLabel('Your turn — speak now');
-          if (!isMutedRef.current) startMicCapture();
+        console.log('[Room] turnComplete');
+        turnCompleteReceivedRef.current = true;
+        // If audio queue already drained, transition now
+        if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
+          playNextRef.current?.(); // handles transition logic
         }
       };
       svc.onInterrupted = () => {
         if (cancelled) return;
-        stopPlayback();
+        stopPlayback(); // clears queue + refs
         setRoomStateSynced(STATE.USER_SPEAKING);
         setStatusLabel('Listening…');
         if (!isMutedRef.current) startMicCapture();
@@ -492,7 +546,7 @@ export default function InterviewRoomScreen({ navigation, route }) {
 
       {/* Camera / black bg */}
       {!isCameraOff && cameraPermission?.granted ? (
-        <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="front" mirror />
+        <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="front" mirror shutterSound={false} />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.cameraOff]}>
           <Ionicons name="videocam-off" size={48} color="rgba(255,255,255,0.3)" />

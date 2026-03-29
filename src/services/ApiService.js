@@ -1,5 +1,5 @@
 const API_CONFIG = {
-  BASE_URL: 'http://10.150.65.148:5000',
+  BASE_URL: 'http://192.168.0.167:5000',
   TIMEOUT: 90000,
 };
 
@@ -257,7 +257,10 @@ const ApiService = {
       };
 
     } catch (error) {
-      console.log('[ApiService] error:', error.name, error.message);
+      console.error('!!! ApiService Error !!!');
+      console.error('Error type:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
 
       const parsedError = parseError(error);
 

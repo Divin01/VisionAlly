@@ -41,22 +41,21 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as FileSystem from 'expo-file-system';
-import CONFIG from '../../config';
+import * as FileSystem from 'expo-file-system/legacy';
+import { API_CONFIG } from './ApiService';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const GEMINI_API_KEY = CONFIG.GEMINI_API_KEY;
-
-// ✅ Valid Live API model names (as of mid-2025):
-//    'gemini-2.0-flash-live-001'       ← stable, recommended
-//    'gemini-live-2.5-flash-preview'   ← latest preview
-// ❌ 'gemini-2.0-flash-exp'            ← DEPRECATED, causes 1008 close
-const GEMINI_MODEL = 'gemini-3.1-flash-live-preview';
-
-const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
-const WS_URL  = `${WS_BASE}?key=${GEMINI_API_KEY}`;
+// Connect to the Python relay server instead of directly to Gemini.
+// The relay server handles the Gemini API key and protocol details.
+// Derive the WS host from the HTTP API base URL (same server, port 8765).
+function getRelayUrl() {
+  const httpBase = API_CONFIG.BASE_URL; // e.g. "http://10.150.65.148:5000"
+  const host = httpBase.replace(/^https?:\/\//, '').replace(/:\d+$/, '');
+  return `ws://${host}:8765`;
+}
 
 const OUTPUT_SAMPLE_RATE = 24000; // Gemini outputs 24 kHz PCM
+const STREAM_BATCH_SIZE = 10;     // Flush audio every ~500ms for real-time playback
 
 // ─── WAV Header ───────────────────────────────────────────────────────────────
 function buildWavHeader(pcmLen, sr = OUTPUT_SAMPLE_RATE, ch = 1, bits = 16) {
@@ -163,49 +162,42 @@ export class GeminiLiveService {
       try { this._ws.close(); } catch { /* ignore */ }
       this._ws = null;
     }
-      if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_')) {
-        const e = new Error('GEMINI_API_KEY not configured in config.js');
-        console.log('[GeminiLive]', e.message);
-        if (this.onError) this.onError(e);
-        reject(e);
-        return;
-      }
 
-      console.log('[GeminiLive] Connecting, model:', GEMINI_MODEL);
+      const relayUrl = getRelayUrl();
+      console.log('[GeminiLive] Connecting to relay:', relayUrl);
+
       try {
-        this._ws = new WebSocket(WS_URL);
+        this._ws = new WebSocket(relayUrl);
       } catch (e) {
         reject(e);
         return;
       }
 
-this._ws.send(JSON.stringify({
-  setup: {
-    model: `models/${GEMINI_MODEL}`,
-    generationConfig: {
-      responseModalities: ['AUDIO'],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
+      let settled = false;
+
+      this._ws.onopen = () => {
+        console.log('[GeminiLive] WS open — sending setup to relay');
+        this._isConnected = true;
+
+        // Send setup to the Python relay server.
+        // The relay injects the API key + model config and forwards to Gemini.
+        this._ws.send(JSON.stringify({
+          setup: {
+            systemInstruction: systemInstruction,
             voiceName: 'Aoede',
           },
-        },
-      },
-    },
-    systemInstruction: {
-      parts: [{ text: systemInstruction }],
-    },
-    // ❌ REMOVE THIS ENTIRE BLOCK — causes clean 1000 close on v1beta
-    // contextWindowCompression: {
-    //   triggerTokens: 25600,
-    //   slidingWindow: { targetTokens: 12800 },
-    // },
-  },
-}));
-      this._ws.onmessage = async (evt) => {
-        await this._handleMessage(evt.data, resolve);
+        }));
       };
-      let settled = false;
+
+      this._msgCount = 0;
+
+      this._ws.onmessage = (evt) => {
+        this._msgCount++;
+        console.log(`[GeminiLive] onmessage #${this._msgCount}, type: ${typeof evt.data}, len: ${evt.data?.length ?? '?'}`);
+        this._handleMessage(evt.data, resolve).catch(e => {
+          console.log('[GeminiLive] _handleMessage error:', e);
+        });
+      };
 
       this._ws.onerror = (err) => {
         if (settled) return;
@@ -236,9 +228,9 @@ this._ws.send(JSON.stringify({
   sendAudioChunk(b64Pcm) {
     if (!this.isReady) return;
     this._send({
-      realtimeInput: {                               // ✅ was: realtime_input
-        audio: {                                     // ✅ was: media_chunks array (wrong)
-          mimeType: 'audio/pcm',                     // ✅ was: mime_type inside chunk object
+      realtimeInput: {
+        audio: {
+          mimeType: 'audio/pcm;rate=16000',
           data: b64Pcm,
         },
       },
@@ -292,7 +284,12 @@ this._ws.send(JSON.stringify({
 
   async _handleMessage(raw, resolveSetup) {
     let msg;
-    try { msg = JSON.parse(typeof raw === 'string' ? raw : await raw.text()); } catch { return; }
+    try {
+      msg = JSON.parse(typeof raw === 'string' ? raw : await raw.text());
+    } catch (e) {
+      console.log('[GeminiLive] JSON parse failed:', e.message, 'raw type:', typeof raw, 'raw preview:', String(raw).substring(0, 100));
+      return;
+    }
 
     if (msg.setupComplete !== undefined) {
       console.log('[GeminiLive] ✅ setupComplete');
@@ -313,21 +310,40 @@ this._ws.send(JSON.stringify({
     }
 
     const c = msg.serverContent;
-    if (!c) return;
+    if (!c) {
+      console.log('[GeminiLive] non-serverContent msg keys:', Object.keys(msg));
+      return;
+    }
 
     if (c.interrupted) {
+      console.log('[GeminiLive] interrupted');
       this._audioBuffer = [];
       if (this.onInterrupted) this.onInterrupted();
       return;
     }
 
-    for (const p of (c.modelTurn?.parts ?? [])) {
-      if (p.inlineData?.mimeType?.startsWith('audio/pcm') && p.inlineData.data) {
-        this._audioBuffer.push(p.inlineData.data);
+    const parts = c.modelTurn?.parts ?? [];
+    for (const p of parts) {
+      if (p.inlineData?.data) {
+        const mime = p.inlineData.mimeType || '';
+        console.log('[GeminiLive] received part mimeType:', mime, 'data length:', p.inlineData.data.length);
+        if (mime.startsWith('audio/')) {
+          this._audioBuffer.push(p.inlineData.data);
+        }
+      } else if (p.text) {
+        console.log('[GeminiLive] received text part:', p.text.substring(0, 80));
       }
     }
 
+    // Stream audio in batches for real-time playback
+    if (this._audioBuffer.length >= STREAM_BATCH_SIZE && !c.turnComplete) {
+      const wavUri = await this._flushToWav();
+      if (wavUri && this.onAudioReady) this.onAudioReady(wavUri);
+      this._audioBuffer = [];
+    }
+
     if (c.turnComplete) {
+      console.log('[GeminiLive] turnComplete, remaining chunks:', this._audioBuffer.length);
       if (this._audioBuffer.length > 0) {
         const wavUri = await this._flushToWav();
         if (wavUri && this.onAudioReady) this.onAudioReady(wavUri);
@@ -375,21 +391,13 @@ this._ws.send(JSON.stringify({
 
 // ─── Document Analyser ────────────────────────────────────────────────────────
 export async function analyseJobDocument(base64Data, mimeType) {
-  const url  = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-  const body = {
-    contents: [{
-      parts: [
-        { inlineData: { mimeType, data: base64Data } },
-        { text: 'Extract in plain text (no markdown): Job title, Company, Key responsibilities, Required skills, Nice-to-haves. Be concise.' },
-      ],
-    }],
-    generationConfig: { maxOutputTokens: 500 },
-  };
-  const res  = await fetch(url, {
+  // Route through the Flask server so the API key stays server-side
+  const url = `${API_CONFIG.BASE_URL}/api/analyse_document`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ data: base64Data, mimeType }),
   });
-  const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  const json = await res.json();
+  return json.text ?? '';
 }
