@@ -1,5 +1,5 @@
 // src/navigation/AppNavigator.js
-// Registers all screens including the new AboutMeScreen and InterviewRoomScreen.
+// Registers all screens including Onboarding, AboutMe, and InterviewRoom.
 
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
@@ -7,26 +7,31 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { StorageService } from '../utils/storage';
+import { UserProfileService } from '../services/UserProfileService';
 
-import LoginScreen          from '../screens/auth/LoginScreen';
-import MainScreen           from '../screens/main/MainScreen';
+import LoginScreen            from '../screens/auth/LoginScreen';
+import MainScreen             from '../screens/main/MainScreen';
 import ChatConversationScreen from '../screens/main/ChatConversationScreen';
-import AboutMeScreen        from '../screens/main/AboutMeScreen';
-import InterviewRoomScreen  from '../screens/main/InterviewRoomScreen';
+import AboutMeScreen          from '../screens/main/AboutMeScreen';
+import InterviewRoomScreen    from '../screens/main/InterviewRoomScreen';
+import OnboardingScreen       from '../screens/main/OnboardingScreen';
 
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
-  const [user,    setUser]    = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user,             setUser]             = useState(null);
+  const [loading,          setLoading]          = useState(true);
+  const [onboardingDone,   setOnboardingDone]   = useState(true); // default true to avoid flash
 
   useEffect(() => {
     const checkStoredSession = async () => {
       const session = await StorageService.getUserSession();
       if (session) {
-        const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
           if (firebaseUser) {
             setUser(firebaseUser);
+            const done = await UserProfileService.isOnboardingDone();
+            setOnboardingDone(done);
           } else {
             StorageService.clearUserSession();
             setUser(null);
@@ -35,8 +40,12 @@ export default function AppNavigator() {
         });
         return unsubscribe;
       } else {
-        const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
           setUser(firebaseUser);
+          if (firebaseUser) {
+            const done = await UserProfileService.isOnboardingDone();
+            setOnboardingDone(done);
+          }
           setLoading(false);
         });
         return unsubscribe;
@@ -60,6 +69,15 @@ export default function AppNavigator() {
           <>
             {/* ── Authenticated stack ─────────────────────────────────────── */}
 
+            {/* Show onboarding first if not completed */}
+            {!onboardingDone && (
+              <Stack.Screen
+                name="Onboarding"
+                component={OnboardingScreen}
+                options={{ animation: 'fade' }}
+              />
+            )}
+
             {/* Main tab screen */}
             <Stack.Screen name="Main" component={MainScreen} />
 
@@ -76,11 +94,9 @@ export default function AppNavigator() {
               component={AboutMeScreen}
               options={{
                 headerShown:         false,
-                animation:           'slide_from_bottom',   // feels like a modal/sheet
+                animation:           'slide_from_bottom',
                 gestureEnabled:      true,
                 gestureDirection:    'vertical',
-                // Prevent dismissal by swipe when coming from "must complete profile" flow
-                // (controlled per-call via route.params.preventDismiss if needed)
               }}
             />
 
@@ -90,8 +106,8 @@ export default function AppNavigator() {
               component={InterviewRoomScreen}
               options={{
                 headerShown:      false,
-                animation:        'fade',         // cinematic entrance
-                gestureEnabled:   false,          // prevent accidental swipe-back during interview
+                animation:        'fade',
+                gestureEnabled:   false,
               }}
             />
           </>

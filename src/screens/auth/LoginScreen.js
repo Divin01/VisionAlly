@@ -49,7 +49,6 @@ export default function LoginScreen({ navigation }) {
           createdAt,
           lastLogin: createdAt,
           role: 'user',
-          trustedContacts: [],
           ...additionalData,
         });
       } catch (error) {

@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, firestore } from '../../../firebase';
 import { InterviewStorageService } from '../../services/InterviewStorageService';
+import { UserProfileService } from '../../services/UserProfileService';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -133,23 +134,36 @@ export default function AboutMeScreen({ navigation, route }) {
     (async () => {
       try {
         if (!uid) return;
-        // Try Firestore first
-        const snap = await getDoc(doc(firestore, 'users', uid, 'profile', 'about_me'));
-        const data = snap.exists() ? snap.data() : null;
+        // Load from UserProfileService (local-first, then Firebase)
+        const cached = await UserProfileService.getProfile();
 
-        if (data) {
-          setFirstName(data.firstName   ?? auth.currentUser?.displayName?.split(' ')[0] ?? '');
-          setDisability(data.disability  ?? '');
-          setAccommodation(data.accommodation ?? '');
-          setField(data.field            ?? '');
-          setExperience(data.experience  ?? '');
-          setEducation(data.education    ?? '');
-          setSkills(data.skills?.length ? [...data.skills, '', '', ''].slice(0, 3) : ['', '', '']);
-          setCareerGoal(data.careerGoal  ?? '');
+        if (cached && (cached.disability || cached.field || cached.careerGoal)) {
+          setFirstName(cached.displayName?.split(' ')[0] ?? auth.currentUser?.displayName?.split(' ')[0] ?? '');
+          setDisability(cached.disability  ?? '');
+          setAccommodation(cached.accommodation ?? '');
+          setField(cached.field            ?? '');
+          setExperience(cached.experience  ?? '');
+          setEducation(cached.education    ?? '');
+          setSkills(cached.skills?.length ? [...cached.skills, '', '', ''].slice(0, 3) : ['', '', '']);
+          setCareerGoal(cached.careerGoal  ?? '');
         } else {
-          // Pre-fill name from Firebase Auth
-          const name = auth.currentUser?.displayName ?? '';
-          setFirstName(name.split(' ')[0]);
+          // Fallback: try Firestore directly
+          const snap = await getDoc(doc(firestore, 'users', uid, 'profile', 'about_me'));
+          const data = snap.exists() ? snap.data() : null;
+
+          if (data) {
+            setFirstName(data.firstName   ?? auth.currentUser?.displayName?.split(' ')[0] ?? '');
+            setDisability(data.disability  ?? '');
+            setAccommodation(data.accommodation ?? '');
+            setField(data.field            ?? '');
+            setExperience(data.experience  ?? '');
+            setEducation(data.education    ?? '');
+            setSkills(data.skills?.length ? [...data.skills, '', '', ''].slice(0, 3) : ['', '', '']);
+            setCareerGoal(data.careerGoal  ?? '');
+          } else {
+            const name = auth.currentUser?.displayName ?? '';
+            setFirstName(name.split(' ')[0]);
+          }
         }
       } catch (err) {
         console.error('[AboutMe] load error:', err);
@@ -189,11 +203,24 @@ export default function AboutMeScreen({ navigation, route }) {
         updatedAt:     new Date().toISOString(),
       };
 
-      // Save to Firestore
+      // Save to Firestore (legacy path)
       await setDoc(doc(firestore, 'users', uid, 'profile', 'about_me'), profile, { merge: true });
 
       // Cache locally for fast access
       await InterviewStorageService.cacheAboutMe(profile);
+
+      // Also sync through UserProfileService so Settings and all screens stay consistent
+      await UserProfileService.saveProfile({
+        displayName: auth.currentUser?.displayName || firstName.trim(),
+        disability,
+        accommodation: accommodation.trim(),
+        field: field.trim(),
+        experience,
+        education,
+        skills: skills.map(s => s.trim()).filter(Boolean),
+        careerGoal,
+        targetRole: field.trim(),
+      });
 
       Alert.alert(
         '✅ Profile Saved',
