@@ -163,24 +163,19 @@ cd VisionAlly
 
 The project requires API keys that are **not committed to the repository** for security.
 
-**Download and extract `api_keys_variables.zip`** (provided separately). It contains:
+**Open the provided `API_Keys_Variables.docx`** (Word document, provided separately). It contains the contents for the following files:
 
 | File | Purpose | Place in |
 |---|---|---|
 | `.env` | Gemini API keys for the Python backend | Project root (`VisionAlly/`) |
 | `config.js` | Adzuna API credentials for job search | Project root (`VisionAlly/`) |
-| `firebase.js` | Firebase project configuration | Project root (`VisionAlly/`) |
 
-**Extract the zip and copy/paste all files into the root of the project:**
 
-```bash
-# After extracting api_keys_variables.zip, copy files to project root:
-# On Windows:
-copy api_keys_variables\* VisionAlly\
+**Create each file in the project root and copy/paste the contents from the Word document:**
 
-# On macOS / Linux:
-cp api_keys_variables/* VisionAlly/
-```
+1. Open `API_Keys_Variables.docx`
+2. For each file listed (`.env`, `config.js`, `firebase.js`), create the file in the `VisionAlly/` project root
+3. Copy the contents from the document into the corresponding file and save
 
 These files are already listed in `.gitignore`, so they will not be accidentally committed.
 
@@ -372,11 +367,11 @@ VisionAlly/
 ├── App.js                              # Root component — wraps app in ChatProvider
 ├── app.json                            # Expo project configuration
 ├── babel.config.js                     # Babel config (expo preset)
-├── config.js                           # Adzuna API credentials (from zip)
-├── firebase.js                         # Firebase init — Auth + Firestore (from zip)
+├── config.js                           # Adzuna API credentials (from docx)
+├── firebase.js                         # Firebase init — Auth + Firestore (from docx)
 ├── index.js                            # Entry point — registers root component
 ├── package.json                        # Node.js dependencies
-├── .env                                # Gemini API keys (from zip)
+├── .env                                # Gemini API keys (from docx)
 ├── LICENSE                             # MIT License
 │
 ├── assets/                             # App icons, splash screen, logos
@@ -489,7 +484,7 @@ The WebSocket relay server (`models/server/live_server.py`) handles real-time vo
 
 ## Environment Variables Reference
 
-If you want to set up your own API keys instead of using the provided zip file, create these files:
+If you want to set up your own API keys instead of using the provided Word document, create these files:
 
 ### `.env` (project root)
 
