@@ -7,8 +7,6 @@
 ## Table of Contents
 
 - [Overview](#overview)
-- [Features](#features)
-- [Architecture & Tech Stack](#architecture--tech-stack)
 - [Prerequisites](#prerequisites)
 - [Quick Start (Full Setup)](#quick-start-full-setup)
   - [Step 1 — Clone the Repository](#step-1--clone-the-repository)
@@ -18,6 +16,8 @@
   - [Step 5 — Configure Your Local IP Address](#step-5--configure-your-local-ip-address)
   - [Step 6 — Start the Backend Servers](#step-6--start-the-backend-servers)
   - [Step 7 — Start the React Native App](#step-7--start-the-react-native-app)
+- [Features](#features)
+- [Architecture & Tech Stack](#architecture--tech-stack)
 - [Running on Physical Devices](#running-on-physical-devices)
 - [Project Structure](#project-structure)
 - [API Endpoints](#api-endpoints)
@@ -38,93 +38,6 @@ VisionAlly is a **React Native (Expo)** mobile application paired with a **Pytho
 5. **Interview History** — Full transcript storage and scored feedback for every mock interview session
 
 The app uses **Firebase Authentication** (email/password) and **Cloud Firestore** for user profiles, with **AsyncStorage** as a local-first cache for fast offline access.
-
----
-
-## Features
-
-| Feature | Description |
-|---|---|
-| **Firebase Auth** | Secure email/password authentication with persistent sessions |
-| **Smart Chat** | Multi-modal AI chat — send text, images, audio recordings, or PDF documents for career guidance |
-| **AI Interview Coach** | Live voice interview with Gemini Live API through a WebSocket relay server; scores and feedback after each session |
-| **Job Discovery** | Browse South African job listings from Adzuna with category filters, salary ranges, and search |
-| **Job Trends** | Market insight charts — top categories, salary trends, demand analysis |
-| **About Me Profile** | Profile builder covering skills, experience, disability disclosure, accommodation needs, and career goals |
-| **Onboarding Flow** | First-launch guided onboarding to capture user profile before accessing the main app |
-| **Conversation History** | Auto-titled chat conversations with local persistence |
-| **Interview History** | Past interview transcripts with AI-generated scores and feedback |
-| **Document Analysis** | Upload job offers/CVs as images or PDFs for AI-powered analysis and recommendations |
-| **Settings** | App preferences and account management |
-
----
-
-## Architecture & Tech Stack
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     MOBILE APP (Expo / React Native)            │
-│   React Navigation  ·  ChatContext  ·  AsyncStorage (cache)     │
-│   expo-audio  ·  expo-camera  ·  expo-image-picker              │
-└──────────┬─────────────────────────────────┬────────────────────┘
-           │  HTTP REST (port 5000)          │  WebSocket (port 8765)
-           ▼                                 ▼
-┌─────────────────────┐         ┌──────────────────────────────┐
-│  Flask API Server   │         │  Gemini Live Relay Server    │
-│  (models/server/    │         │  (models/server/             │
-│   app.py)           │         │   live_server.py)            │
-│                     │         │                              │
-│  • /api/chatbot     │         │  App ←WS→ Relay ←WS→ Gemini │
-│  • /api/clear_session│        │  API key stays on server     │
-│  • /api/analyse_doc │         │                              │
-│  • /health          │         │                              │
-└────────┬────────────┘         └──────────┬───────────────────┘
-         │                                 │
-         ▼                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   Google Gemini AI APIs                          │
-│   gemini-2.5-flash (chat)  ·  gemini-2.5-flash-native-audio    │
-│                             (live interviews)                   │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────┐    ┌──────────────────────┐
-│  Firebase           │    │  Adzuna Jobs API     │
-│  • Auth             │    │  (South Africa)      │
-│  • Cloud Firestore  │    │  Free: 250 calls/day │
-└─────────────────────┘    └──────────────────────┘
-```
-
-### Frontend
-| Technology | Purpose |
-|---|---|
-| React Native 0.81 + Expo SDK 54 | Cross-platform mobile framework |
-| React Navigation 7 | Stack-based screen navigation |
-| React Context API | Global state management (ChatContext) |
-| AsyncStorage | Local-first persistence and caching |
-| expo-audio / expo-av | Audio recording and playback |
-| expo-camera | Camera access for interview room |
-| expo-image-picker | Image selection for chat |
-| expo-document-picker | PDF/document upload |
-| expo-file-system | File I/O for audio WAV processing |
-| Firebase JS SDK 11 | Authentication and Firestore |
-
-### Backend
-| Technology | Purpose |
-|---|---|
-| Python 3.8+ | Server runtime |
-| Flask + flask-cors | REST API server (port 5000) |
-| websockets | WebSocket relay server (port 8765) |
-| google-generativeai | Gemini SDK for chat + file uploads |
-| python-dotenv | Environment variable loading |
-| Pillow (PIL) | Image processing |
-
-### External Services
-| Service | Purpose | Cost |
-|---|---|---|
-| Google Gemini API | AI chat + live interview | Free tier available |
-| Firebase | Auth + Firestore database | Free Spark plan |
-| Adzuna API | South African job listings | Free: 250 calls/day |
 
 ---
 
@@ -163,19 +76,20 @@ cd VisionAlly
 
 The project requires API keys that are **not committed to the repository** for security.
 
-**Open the provided `API_Keys_Variables.docx`** (Word document, provided separately). It contains the contents for the following files:
+**The required configuration files are available in the same Google Drive folder where the project video demonstration was submitted.** Navigate to that shared Google Drive folder and locate the configuration file contents for the following:
 
-| File | Purpose | Place in |
+| File | Purpose | Create in |
 |---|---|---|
 | `.env` | Gemini API keys for the Python backend | Project root (`VisionAlly/`) |
 | `config.js` | Adzuna API credentials for job search | Project root (`VisionAlly/`) |
+| `firebase.js` | Firebase project configuration | Project root (`VisionAlly/`) |
 
+**Steps:**
 
-**Create each file in the project root and copy/paste the contents from the Word document:**
-
-1. Open `API_Keys_Variables.docx`
-2. For each file listed (`.env`, `config.js`, `firebase.js`), create the file in the `VisionAlly/` project root
-3. Copy the contents from the document into the corresponding file and save
+1. Go to the **Google Drive folder** where the project video was submitted
+2. Find the API keys / configuration details provided alongside the video
+3. Create each file (`.env`, `config.js`, `firebase.js`) in the `VisionAlly/` project root
+4. Copy the corresponding contents into each file and save
 
 These files are already listed in `.gitignore`, so they will not be accidentally committed.
 
@@ -336,6 +250,91 @@ This starts the Expo development server. You will see a QR code in the terminal.
 
 ---
 
+## Features
+
+| Feature | Description |
+|---|---|
+| **Firebase Auth** | Secure email/password authentication with persistent sessions |
+| **Smart Chat** | Multi-modal AI chat — send text, images, audio recordings, or PDF documents for career guidance |
+| **AI Interview Coach** | Live voice interview with Gemini Live API through a WebSocket relay server; scores and feedback after each session |
+| **Job Discovery** | Browse South African job listings from Adzuna with category filters, salary ranges, and search |
+| **Job Trends** | Market insight charts — top categories, salary trends, demand analysis |
+| **About Me Profile** | Profile builder covering skills, experience, disability disclosure, accommodation needs, and career goals |
+| **Onboarding Flow** | First-launch guided onboarding to capture user profile before accessing the main app |
+| **Conversation History** | Auto-titled chat conversations with local persistence |
+| **Interview History** | Past interview transcripts with AI-generated scores and feedback |
+| **Document Analysis** | Upload job offers/CVs as images or PDFs for AI-powered analysis and recommendations |
+| **Settings** | App preferences and account management |
+
+---
+
+## Architecture & Tech Stack
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     MOBILE APP (Expo / React Native)            │
+│   React Navigation  ·  ChatContext  ·  AsyncStorage (cache)     │
+│   expo-audio  ·  expo-camera  ·  expo-image-picker              │
+└──────────┬─────────────────────────────────┬────────────────────┘
+           │  HTTP REST (port 5000)          │  WebSocket (port 8765)
+           ▼                                 ▼
+┌─────────────────────┐         ┌──────────────────────────────┐
+│  Flask API Server   │         │  Gemini Live Relay Server    │
+│  (models/server/    │         │  (models/server/             │
+│   app.py)           │         │   live_server.py)            │
+│                     │         │                              │
+│  • /api/chatbot     │         │  App ←WS→ Relay ←WS→ Gemini │
+│  • /api/clear_session│        │  API key stays on server     │
+│  • /api/analyse_doc │         │                              │
+│  • /health          │         │                              │
+└────────┬────────────┘         └──────────┬───────────────────┘
+         │                                 │
+         ▼                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Google Gemini AI APIs                          │
+│   gemini-2.5-flash (chat)  ·  gemini-2.5-flash-native-audio    │
+│                             (live interviews)                   │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────┐    ┌──────────────────────┐
+│  Firebase           │    │  Adzuna Jobs API     │
+│  • Auth             │    │  (South Africa)      │
+│  • Cloud Firestore  │    │  Free: 250 calls/day │
+└─────────────────────┘    └──────────────────────┘
+```
+
+### Frontend
+| Technology | Purpose |
+|---|---|
+| React Native 0.81 + Expo SDK 54 | Cross-platform mobile framework |
+| React Navigation 7 | Stack-based screen navigation |
+| React Context API | Global state management (ChatContext) |
+| AsyncStorage | Local-first persistence and caching |
+| expo-audio / expo-av | Audio recording and playback |
+| expo-camera | Camera access for interview room |
+| expo-image-picker | Image selection for chat |
+| expo-document-picker | PDF/document upload |
+| expo-file-system | File I/O for audio WAV processing |
+| Firebase JS SDK 11 | Authentication and Firestore |
+
+### Backend
+| Technology | Purpose |
+|---|---|
+| Python 3.8+ | Server runtime |
+| Flask + flask-cors | REST API server (port 5000) |
+| websockets | WebSocket relay server (port 8765) |
+| google-generativeai | Gemini SDK for chat + file uploads |
+| python-dotenv | Environment variable loading |
+| Pillow (PIL) | Image processing |
+
+### External Services
+| Service | Purpose | Cost |
+|---|---|---|
+| Google Gemini API | AI chat + live interview | Free tier available |
+| Firebase | Auth + Firestore database | Free Spark plan |
+| Adzuna API | South African job listings | Free: 250 calls/day |
+
 ## Running on Physical Devices
 
 ### Android Phone
@@ -367,11 +366,11 @@ VisionAlly/
 ├── App.js                              # Root component — wraps app in ChatProvider
 ├── app.json                            # Expo project configuration
 ├── babel.config.js                     # Babel config (expo preset)
-├── config.js                           # Adzuna API credentials (from docx)
-├── firebase.js                         # Firebase init — Auth + Firestore (from docx)
+├── config.js                           # Adzuna API credentials (not in repo — see Step 2)
+├── firebase.js                         # Firebase init — Auth + Firestore (not in repo — see Step 2)
 ├── index.js                            # Entry point — registers root component
 ├── package.json                        # Node.js dependencies
-├── .env                                # Gemini API keys (from docx)
+├── .env                                # Gemini API keys (not in repo — see Step 2)
 ├── LICENSE                             # MIT License
 │
 ├── assets/                             # App icons, splash screen, logos
@@ -484,7 +483,7 @@ The WebSocket relay server (`models/server/live_server.py`) handles real-time vo
 
 ## Environment Variables Reference
 
-If you want to set up your own API keys instead of using the provided Word document, create these files:
+If you want to set up your own API keys instead of using the ones from the Google Drive folder, create these files:
 
 ### `.env` (project root)
 
