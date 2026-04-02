@@ -66,7 +66,7 @@ Follow these steps in order. Both the **Flask API server** and the **WebSocket r
 ### Step 1 — Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/VisionAlly.git
+git clone https://github.com/Divin01/VisionAlly.git
 cd VisionAlly
 ```
 
@@ -87,7 +87,7 @@ The project requires API keys that are **not committed to the repository** for s
 **Steps:**
 
 1. Go to the **Google Drive folder** where the project video was submitted
-2. Find the API keys / configuration details provided alongside the video
+2. Find the API keys in the Api_keys.docx (the word document) in the folder link
 3. Create each file (`.env`, `config.js`, `firebase.js`) in the `VisionAlly/` project root
 4. Copy the corresponding contents into each file and save
 
