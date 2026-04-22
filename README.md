@@ -183,7 +183,7 @@ You need **two terminal windows** — one for each server.
 
 ```bash
 cd models/server
-python app.py
+py app.py
 ```
 
 You should see:
@@ -207,7 +207,7 @@ Model: gemini-2.5-flash
 
 ```bash
 cd models/server
-python live_server.py
+py live_server.py
 ```
 
 You should see:

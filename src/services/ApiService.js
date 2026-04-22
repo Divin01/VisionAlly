@@ -1,5 +1,7 @@
 const API_CONFIG = {
-  BASE_URL: 'http://10.96.86.131:5000',
+  // BASE_URL: 'http://YOUR_LOCAL_IP:5000',   
+
+  BASE_URL: 'http://192.168.68.108:5000',    // <-- Replace with your IP like shown above
   TIMEOUT: 90000,
 };
 
