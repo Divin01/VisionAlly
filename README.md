@@ -122,7 +122,7 @@ This installs: `flask`, `flask-cors`, `pillow`, `google-generativeai`, `python-d
 > **Tip:** It's recommended to use a Python virtual environment:
 > ```bash
 > # Create virtual environment (one time)
-> python -m venv venv
+> py -m venv venv
 >
 > # Activate it
 > # Windows:
